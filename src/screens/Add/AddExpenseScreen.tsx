@@ -11,25 +11,72 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { AppTabParamList } from '../../navigation/AppTabs';
 import colors from '../../lib/colors';
+import { createTransaction } from '../../services/transactions';
+import { CurrencyCode, PaymentMethod } from '../../lib/types';
+import { useNavigation } from '@react-navigation/native';
+import { useTransactionsStore } from '../../store/useTransactionsStore';
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Add'>;
 
-const AddExpenseScreen: React.FC<Props> = () => {
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'UPI' | 'Cash' | 'Card' | 'Other'>('UPI');
-  const [category, setCategory] = useState<string>('Food & Dining');
-  const [isRecurring, setIsRecurring] = useState(false);
 
-  const handleSave = () => {
-    // TODO: wire to local DB later
-    console.log({
-      amount,
-      note,
-      paymentMethod,
-      category,
-      isRecurring,
-    });
+const AddExpenseScreen: React.FC<Props> = () => {
+    const [category, setCategory] = useState<string>('Food & Dining');
+    const [isRecurring, setIsRecurring] = useState(false);
+    const [amount, setAmount] = useState('');
+    const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Card');
+    const [date, setDate] = useState<string>(new Date().toISOString());
+    const [note, setNote] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const currency: CurrencyCode = 'INR';
+
+    const navigation = useNavigation();
+    const addLocalTransaction = useTransactionsStore((s) => s.addLocalTransaction);
+
+    const handleSaveExpense = async () => {
+    if (isSaving) return;
+
+    // Validate amount
+    const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ''));
+    if (!numericAmount || numericAmount <= 0) {
+      console.log('Amount is invalid');
+      return;
+    }
+
+    // Validate category
+    if (!selectedCategoryId) {
+      console.log('Category is required');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+
+      // Create transaction
+      const saved = await createTransaction({
+        type: 'expense',
+        amount: numericAmount,
+        currency,
+        date, // ISO string
+        categoryId: selectedCategoryId,
+        paymentMethod,
+        note: note || null,
+        merchant: null,
+        metadataJson: null,
+        isRecurring: false,
+        source: 'manual',
+      });
+
+      // Update global state immediately
+      addLocalTransaction(saved);
+
+      // Go back after save
+      navigation.goBack();
+    } catch (err) {
+      console.error('Failed to save transaction', err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const aiPrediction = {
@@ -209,10 +256,12 @@ const AddExpenseScreen: React.FC<Props> = () => {
         {/* Save button */}
         <TouchableOpacity
           style={styles.saveButton}
-          activeOpacity={0.85}
-          onPress={handleSave}
+          onPress={handleSaveExpense}
+          disabled={isSaving}
         >
-          <Text style={styles.saveButtonText}>Save Expense</Text>
+          <Text style={styles.saveButtonText}>
+            {isSaving ? 'Saving…' : 'Save Expense'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -224,6 +273,7 @@ type ChipProps = {
   selected: boolean;
   onPress: () => void;
 };
+
 
 const Chip: React.FC<ChipProps> = ({ label, selected, onPress }) => {
   return (

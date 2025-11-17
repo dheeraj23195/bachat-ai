@@ -1,29 +1,56 @@
-import React from 'react';
+import React from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import { AppTabParamList } from '../../navigation/AppTabs';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../../navigation/RootNavigator';
-import colors from '../../lib/colors';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import { AppTabParamList } from "../../navigation/AppTabs";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { RootStackParamList } from "../../navigation/RootNavigator";
+import colors from "../../lib/colors";
+import { useTransactionsStore } from "../../store/useTransactionsStore";
+import { startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 
-type Props = BottomTabScreenProps<AppTabParamList, 'Home'> & {
+type Props = BottomTabScreenProps<AppTabParamList, "Home"> & {
   navigation: NativeStackNavigationProp<RootStackParamList>;
 };
 
-
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
-    const handleImportPress = () => navigation.navigate('ImportTransactions');
-    const handleScanPress = () => {}; // leave empty for now
-    const handleChatPress = () => navigation.navigate('Chatbot');
-    const handleNotificationsPress = () => navigation.navigate('Alerts');
-    const handleAddPress = () => navigation.navigate('Add');
+  const handleImportPress = () => navigation.navigate("ImportTransactions");
+  const handleScanPress = () => {}; // leave empty for now
+  const handleChatPress = () => navigation.navigate("Chatbot");
+  const handleNotificationsPress = () => navigation.navigate("Alerts");
+  const handleAddPress = () => navigation.navigate("Add");
+  const transactions = useTransactionsStore((s) => s.transactions);
+  const now = new Date();
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  // filter to this month
+  const monthlyTxns = transactions.filter((t) =>
+    isWithinInterval(parseISO(t.date), { start: monthStart, end: monthEnd })
+  );
+
+  // total monthly spent
+  const totalSpent = monthlyTxns.reduce((sum, t) => sum + t.amount, 0);
+  const categorySpend: Record<string, number> = {};
+
+  for (const tx of monthlyTxns) {
+    if (!tx.categoryId) continue;
+    categorySpend[tx.categoryId] =
+      (categorySpend[tx.categoryId] ?? 0) + tx.amount;
+  }
+
+  // donut dataset for charts
+  const donutData = Object.keys(categorySpend).map((categoryId) => ({
+    categoryId,
+    value: categorySpend[categoryId],
+  }));
+
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -40,7 +67,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
               <Text style={styles.userName}>Adarsh Bhatt</Text>
             </View>
 
-            <TouchableOpacity style={styles.bellButton} onPress={handleNotificationsPress}>
+            <TouchableOpacity
+              style={styles.bellButton}
+              onPress={handleNotificationsPress}
+            >
               <Text style={styles.bellIcon}>🔔</Text>
             </TouchableOpacity>
           </View>
@@ -50,8 +80,9 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.summaryRow}>
               <View>
                 <Text style={styles.summaryLabel}>This Month</Text>
-                <Text style={styles.summaryAmount}>₹6,000</Text>
-                <Text style={styles.summarySubtext}>Remaining of ₹15,000</Text>
+                <Text style={styles.mainAmount}>
+                  ₹{totalSpent.toLocaleString()}
+                </Text>
               </View>
 
               <View style={styles.summaryRight}>
@@ -59,6 +90,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 <Text style={styles.summaryRateLabel}>Savings rate</Text>
               </View>
             </View>
+            
 
             {/* Progress bar */}
             <View style={styles.progressBackground}>
@@ -97,12 +129,18 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.donutPlaceholder}>
               <Text style={styles.donutText}>Donut Chart</Text>
             </View>
-            <View style={styles.legendContainer}>
-              <LegendItem color="#F97316" label="Food & Dining" value="40%" />
-              <LegendItem color="#6366F1" label="Transport" value="25%" />
-              <LegendItem color="#EC4899" label="Shopping" value="20%" />
-              <LegendItem color="#22C55E" label="Others" value="15%" />
-            </View>
+            {donutData.length === 0 ? (
+              <Text style={styles.donutText}>No expenses this month</Text>
+            ) : (
+              donutData.map((item) => (
+                <LegendItem
+                  key={item.categoryId}
+                  color="#4F46E5"
+                  label={item.categoryId}
+                  value={`${item.value.toLocaleString()}`}
+                />
+              ))
+            )}
           </View>
         </View>
       </ScrollView>
@@ -155,6 +193,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  mainAmount: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
   contentContainer: {
     paddingBottom: 24,
   },
@@ -167,42 +210,42 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 24,
   },
   headerTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   greetingText: {
     fontSize: 14,
-    color: '#E5E7EB',
+    color: "#E5E7EB",
   },
   userName: {
     marginTop: 4,
     fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   bellButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(255,255,255,0.18)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   bellIcon: {
     fontSize: 18,
-    color: '#FFFFFF',
+    color: "#FFFFFF",
   },
   summaryCard: {
     marginTop: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 20,
     padding: 16,
   },
   summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
   },
   summaryLabel: {
     fontSize: 13,
@@ -211,7 +254,7 @@ const styles = StyleSheet.create({
   summaryAmount: {
     marginTop: 4,
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: "700",
     color: colors.textPrimary,
   },
   summarySubtext: {
@@ -220,12 +263,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
   },
   summaryRight: {
-    alignItems: 'flex-end',
+    alignItems: "flex-end",
   },
   summaryRate: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#22C55E',
+    fontWeight: "700",
+    color: "#22C55E",
   },
   summaryRateLabel: {
     marginTop: 2,
@@ -236,12 +279,12 @@ const styles = StyleSheet.create({
     marginTop: 16,
     height: 8,
     borderRadius: 999,
-    backgroundColor: '#E5E7EB',
-    overflow: 'hidden',
+    backgroundColor: "#E5E7EB",
+    overflow: "hidden",
   },
   progressFill: {
-    width: '40%', // static for now
-    height: '100%',
+    width: "40%", // static for now
+    height: "100%",
     borderRadius: 999,
     backgroundColor: colors.primary,
   },
@@ -250,20 +293,20 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   quickActionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   quickAction: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
   },
   quickIconCircle: {
     width: 56,
     height: 56,
     borderRadius: 20,
-    backgroundColor: '#EEF2FF',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#EEF2FF",
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 8,
   },
   quickIcon: {
@@ -280,7 +323,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     color: colors.textPrimary,
     marginBottom: 12,
   },
@@ -288,7 +331,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 16,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.04,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
@@ -298,9 +341,9 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: 90,
     borderWidth: 2,
-    borderColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 16,
   },
   donutText: {
@@ -311,8 +354,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 6,
   },
   legendDot: {

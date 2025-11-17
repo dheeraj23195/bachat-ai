@@ -13,6 +13,9 @@ import colors from '../../lib/colors';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/RootNavigator';
+import { useTransactionsStore } from '../../store/useTransactionsStore';
+import { startOfMonth, endOfMonth, parseISO, isWithinInterval } from 'date-fns';
+
 
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Budget'>;
@@ -25,6 +28,9 @@ const BudgetScreen: React.FC<Props> = () => {
 
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const handleAlerts = () => navigation.navigate('Alerts');
+  const transactions = useTransactionsStore((s) => s.transactions);
+  
+
 
   const categoryBudgets: CategoryBudget[] = [
     {
