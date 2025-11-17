@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -6,40 +6,49 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import { AppTabParamList } from '../../navigation/AppTabs';
-import colors from '../../lib/colors';
-import { createTransaction } from '../../services/transactions';
-import { CurrencyCode, PaymentMethod } from '../../lib/types';
-import { useNavigation } from '@react-navigation/native';
-import { useTransactionsStore } from '../../store/useTransactionsStore';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
+import { AppTabParamList } from "../../navigation/AppTabs";
+import colors from "../../lib/colors";
+import { createTransaction } from "../../services/transactions";
+import { CurrencyCode, PaymentMethod } from "../../lib/types";
+import { useNavigation } from "@react-navigation/native";
+import { useTransactionsStore } from "../../store/useTransactionsStore";
 
-type Props = BottomTabScreenProps<AppTabParamList, 'Add'>;
+const CATEGORY_OPTIONS = [
+  { id: "food", label: "Food & Dining" },
+  { id: "transport", label: "Transport" },
+  { id: "shopping", label: "Shopping" },
+  { id: "subscriptions", label: "Subscriptions" },
+  { id: "bills", label: "Bills & Utilities" },
+  { id: "other", label: "Other" },
+] as const;
 
+type Props = BottomTabScreenProps<AppTabParamList, "Add">;
 
 const AddExpenseScreen: React.FC<Props> = () => {
-    const [category, setCategory] = useState<string>('Food & Dining');
-    const [isRecurring, setIsRecurring] = useState(false);
-    const [amount, setAmount] = useState('');
-    const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-    const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('Card');
-    const [date, setDate] = useState<string>(new Date().toISOString());
-    const [note, setNote] = useState('');
-    const [isSaving, setIsSaving] = useState(false);
-    const currency: CurrencyCode = 'INR';
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("food");
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("Card");
+  const [date, setDate] = useState<string>(new Date().toISOString());
+  const [note, setNote] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const currency: CurrencyCode = "INR";
 
-    const navigation = useNavigation();
-    const addLocalTransaction = useTransactionsStore((s) => s.addLocalTransaction);
+  const navigation = useNavigation();
+  const addLocalTransaction = useTransactionsStore(
+    (s) => s.addLocalTransaction
+  );
 
-    const handleSaveExpense = async () => {
+  const handleSaveExpense = async () => {
     if (isSaving) return;
 
     // Validate amount
-    const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ''));
+    const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ""));
     if (!numericAmount || numericAmount <= 0) {
-      console.log('Amount is invalid');
+      console.log("Amount is invalid");
       return;
     }
 
@@ -63,9 +72,10 @@ const AddExpenseScreen: React.FC<Props> = () => {
         note: note || null,
         merchant: null,
         metadataJson: null,
-        isRecurring: false,
+        isRecurring,
         source: 'manual',
       });
+
 
       // Update global state immediately
       addLocalTransaction(saved);
@@ -73,16 +83,16 @@ const AddExpenseScreen: React.FC<Props> = () => {
       // Go back after save
       navigation.goBack();
     } catch (err) {
-      console.error('Failed to save transaction', err);
+      console.error("Failed to save transaction", err);
     } finally {
       setIsSaving(false);
     }
   };
 
   const aiPrediction = {
-    label: 'Food & Dining',
+    label: "Food & Dining",
     confidence: 0.86,
-    why: 'Matched keywords from past similar transactions at Zomato / Swiggy',
+    why: "Matched keywords from past similar transactions at Zomato / Swiggy",
   };
 
   return (
@@ -166,23 +176,23 @@ const AddExpenseScreen: React.FC<Props> = () => {
           <View style={styles.chipRow}>
             <Chip
               label="UPI"
-              selected={paymentMethod === 'UPI'}
-              onPress={() => setPaymentMethod('UPI')}
+              selected={paymentMethod === "UPI"}
+              onPress={() => setPaymentMethod("UPI")}
             />
             <Chip
               label="Cash"
-              selected={paymentMethod === 'Cash'}
-              onPress={() => setPaymentMethod('Cash')}
+              selected={paymentMethod === "Cash"}
+              onPress={() => setPaymentMethod("Cash")}
             />
             <Chip
               label="Card"
-              selected={paymentMethod === 'Card'}
-              onPress={() => setPaymentMethod('Card')}
+              selected={paymentMethod === "Card"}
+              onPress={() => setPaymentMethod("Card")}
             />
             <Chip
               label="Other"
-              selected={paymentMethod === 'Other'}
-              onPress={() => setPaymentMethod('Other')}
+              selected={paymentMethod === "Other"}
+              onPress={() => setPaymentMethod("Other")}
             />
           </View>
         </View>
@@ -191,36 +201,14 @@ const AddExpenseScreen: React.FC<Props> = () => {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Category</Text>
           <View style={styles.chipRowWrap}>
-            <Chip
-              label="Food & Dining"
-              selected={category === 'Food & Dining'}
-              onPress={() => setCategory('Food & Dining')}
-            />
-            <Chip
-              label="Transport"
-              selected={category === 'Transport'}
-              onPress={() => setCategory('Transport')}
-            />
-            <Chip
-              label="Shopping"
-              selected={category === 'Shopping'}
-              onPress={() => setCategory('Shopping')}
-            />
-            <Chip
-              label="Subscriptions"
-              selected={category === 'Subscriptions'}
-              onPress={() => setCategory('Subscriptions')}
-            />
-            <Chip
-              label="Bills & Utilities"
-              selected={category === 'Bills & Utilities'}
-              onPress={() => setCategory('Bills & Utilities')}
-            />
-            <Chip
-              label="Other"
-              selected={category === 'Other'}
-              onPress={() => setCategory('Other')}
-            />
+            {CATEGORY_OPTIONS.map((cat) => (
+              <Chip
+                key={cat.id}
+                label={cat.label}
+                selected={selectedCategoryId === cat.id}
+                onPress={() => setSelectedCategoryId(cat.id)}
+              />
+            ))}
           </View>
         </View>
 
@@ -260,7 +248,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
           disabled={isSaving}
         >
           <Text style={styles.saveButtonText}>
-            {isSaving ? 'Saving…' : 'Save Expense'}
+            {isSaving ? "Saving…" : "Save Expense"}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -273,7 +261,6 @@ type ChipProps = {
   selected: boolean;
   onPress: () => void;
 };
-
 
 const Chip: React.FC<ChipProps> = ({ label, selected, onPress }) => {
   return (
@@ -307,7 +294,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 22,
-    fontWeight: '700',
+    fontWeight: "700",
     color: colors.textPrimary,
   },
   headerSubtitle: {
@@ -320,19 +307,19 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     padding: 16,
     borderRadius: 20,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: "#EEF2FF",
   },
   aiHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   aiIconCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#FFFFFF",
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 12,
   },
   aiIcon: {
@@ -340,7 +327,7 @@ const styles = StyleSheet.create({
   },
   aiTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     color: colors.textPrimary,
   },
   aiSubtitle: {
@@ -352,12 +339,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: "#DCFCE7",
   },
   aiConfidenceText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: '#16A34A',
+    fontWeight: "600",
+    color: "#16A34A",
   },
   aiBodyRow: {
     marginTop: 16,
@@ -369,20 +356,20 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   aiCategoryPill: {
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: '#EEF3FF',
+    backgroundColor: "#EEF3FF",
   },
   aiCategoryText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
     color: colors.primary,
   },
   aiWhyLabel: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: "500",
     color: colors.textSecondary,
     marginBottom: 2,
   },
@@ -395,13 +382,13 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: "500",
     color: colors.textPrimary,
     marginBottom: 8,
   },
   amountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     borderRadius: 16,
     backgroundColor: colors.surface,
     paddingHorizontal: 16,
@@ -411,14 +398,14 @@ const styles = StyleSheet.create({
   },
   currencySymbol: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: "600",
     color: colors.textSecondary,
     marginRight: 4,
   },
   amountInput: {
     flex: 1,
     fontSize: 24,
-    fontWeight: '600',
+    fontWeight: "600",
     color: colors.textPrimary,
   },
   inputWrapper: {
@@ -435,12 +422,12 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
   chipRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
   },
   chipRowWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
   } as any,
   chip: {
@@ -462,12 +449,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   chipTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '600',
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   recurringRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   toggleOuter: {
     width: 44,
@@ -475,10 +462,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: "#E5E7EB",
     marginRight: 12,
     padding: 2,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   toggleOuterActive: {
     backgroundColor: colors.primary,
@@ -488,15 +475,15 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#FFFFFF',
-    alignSelf: 'flex-start',
+    backgroundColor: "#FFFFFF",
+    alignSelf: "flex-start",
   },
   toggleInnerActive: {
-    alignSelf: 'flex-end',
+    alignSelf: "flex-end",
   },
   recurringTitle: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: "500",
     color: colors.textPrimary,
   },
   recurringSubtitle: {
@@ -509,12 +496,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: 24,
     paddingVertical: 14,
-    alignItems: 'center',
+    alignItems: "center",
   },
   saveButtonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
 });
 

@@ -1,13 +1,13 @@
 // src/services/transactions.ts
 
-import { getDb } from './db';
+import { getDb } from "./db";
 import {
   Transaction,
   TransactionFilter,
   TransactionType,
   CurrencyCode,
   PaymentMethod,
-} from '../lib/types';
+} from "../lib/types";
 
 // ---- Input types for creating/updating transactions ----
 
@@ -26,7 +26,7 @@ export interface CreateTransactionInput {
   isRecurring?: boolean;
   recurringRule?: string | null;
 
-  source?: Transaction['source'];
+  source?: Transaction["source"];
 }
 
 export interface UpdateTransactionInput {
@@ -46,7 +46,7 @@ export interface UpdateTransactionInput {
 
 // ---- Helpers ----
 
-function generateId(prefix: string = 'tx'): string {
+function generateId(prefix: string = "tx"): string {
   return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 }
 
@@ -64,7 +64,7 @@ function mapRowToTransaction(row: any): Transaction {
     encryptedMetadata: row.encrypted_metadata ?? null,
     isRecurring: !!row.is_recurring,
     recurringRule: row.recurring_rule ?? null,
-    source: row.source as Transaction['source'],
+    source: row.source as Transaction["source"],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -96,15 +96,12 @@ export async function createTransaction(
   const id = generateId();
   const now = new Date().toISOString();
 
-  const {
-    encryptedNote,
-    encryptedMerchant,
-    encryptedMetadata,
-  } = prepareEncryptedFields(input);
+  const { encryptedNote, encryptedMerchant, encryptedMetadata } =
+    prepareEncryptedFields(input);
 
   const isRecurring = input.isRecurring ?? false;
   const recurringRule = input.recurringRule ?? null;
-  const source = input.source ?? 'manual';
+  const source = input.source ?? "manual";
 
   await db.runAsync(
     `
@@ -124,7 +121,7 @@ export async function createTransaction(
       source,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
   `,
     id,
     input.type,
@@ -170,7 +167,7 @@ export async function getTransactionById(
 ): Promise<Transaction | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<any>(
-    'SELECT * FROM transactions WHERE id = ?;',
+    "SELECT * FROM transactions WHERE id = ?;",
     id
   );
 
@@ -190,45 +187,45 @@ export async function listTransactions(
   const params: any[] = [];
 
   if (filter.fromDate) {
-    whereClauses.push('date >= ?');
+    whereClauses.push("date >= ?");
     params.push(filter.fromDate);
   }
 
   if (filter.toDate) {
-    whereClauses.push('date <= ?');
+    whereClauses.push("date <= ?");
     params.push(filter.toDate);
   }
 
   if (filter.categoryIds && filter.categoryIds.length > 0) {
-    const placeholders = filter.categoryIds.map(() => '?').join(', ');
+    const placeholders = filter.categoryIds.map(() => "?").join(", ");
     whereClauses.push(`category_id IN (${placeholders})`);
     params.push(...filter.categoryIds);
   }
 
   if (filter.types && filter.types.length > 0) {
-    const placeholders = filter.types.map(() => '?').join(', ');
+    const placeholders = filter.types.map(() => "?").join(", ");
     whereClauses.push(`type IN (${placeholders})`);
     params.push(...filter.types);
   }
 
-  if (typeof filter.minAmount === 'number') {
-    whereClauses.push('amount >= ?');
+  if (typeof filter.minAmount === "number") {
+    whereClauses.push("amount >= ?");
     params.push(filter.minAmount);
   }
 
-  if (typeof filter.maxAmount === 'number') {
-    whereClauses.push('amount <= ?');
+  if (typeof filter.maxAmount === "number") {
+    whereClauses.push("amount <= ?");
     params.push(filter.maxAmount);
   }
 
   if (filter.source && filter.source.length > 0) {
-    const placeholders = filter.source.map(() => '?').join(', ');
+    const placeholders = filter.source.map(() => "?").join(", ");
     whereClauses.push(`source IN (${placeholders})`);
     params.push(...filter.source);
   }
 
   const whereSql =
-    whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
   const rows = await db.getAllAsync<any>(
     `
@@ -254,24 +251,24 @@ export async function updateTransaction(
   const fields: string[] = [];
   const params: any[] = [];
 
-  if (typeof updates.amount === 'number') {
-    fields.push('amount = ?');
+  if (typeof updates.amount === "number") {
+    fields.push("amount = ?");
     params.push(updates.amount);
   }
   if (updates.currency) {
-    fields.push('currency = ?');
+    fields.push("currency = ?");
     params.push(updates.currency);
   }
   if (updates.date) {
-    fields.push('date = ?');
+    fields.push("date = ?");
     params.push(updates.date);
   }
   if (updates.categoryId !== undefined) {
-    fields.push('category_id = ?');
+    fields.push("category_id = ?");
     params.push(updates.categoryId);
   }
   if (updates.paymentMethod) {
-    fields.push('payment_method = ?');
+    fields.push("payment_method = ?");
     params.push(updates.paymentMethod);
   }
 
@@ -279,29 +276,29 @@ export async function updateTransaction(
     prepareEncryptedFields(updates);
 
   if (updates.note !== undefined) {
-    fields.push('encrypted_note = ?');
+    fields.push("encrypted_note = ?");
     params.push(encryptedNote);
   }
   if (updates.merchant !== undefined) {
-    fields.push('encrypted_merchant = ?');
+    fields.push("encrypted_merchant = ?");
     params.push(encryptedMerchant);
   }
   if (updates.metadataJson !== undefined) {
-    fields.push('encrypted_metadata = ?');
+    fields.push("encrypted_metadata = ?");
     params.push(encryptedMetadata);
   }
 
-  if (typeof updates.isRecurring === 'boolean') {
-    fields.push('is_recurring = ?');
+  if (typeof updates.isRecurring === "boolean") {
+    fields.push("is_recurring = ?");
     params.push(updates.isRecurring ? 1 : 0);
   }
   if (updates.recurringRule !== undefined) {
-    fields.push('recurring_rule = ?');
+    fields.push("recurring_rule = ?");
     params.push(updates.recurringRule);
   }
 
   const now = new Date().toISOString();
-  fields.push('updated_at = ?');
+  fields.push("updated_at = ?");
   params.push(now);
 
   if (fields.length === 0) {
@@ -313,7 +310,7 @@ export async function updateTransaction(
   await db.runAsync(
     `
       UPDATE transactions
-      SET ${fields.join(', ')}
+      SET ${fields.join(", ")}
       WHERE id = ?;
     `,
     params
@@ -325,5 +322,5 @@ export async function updateTransaction(
  */
 export async function deleteTransaction(id: string): Promise<void> {
   const db = await getDb();
-  await db.runAsync('DELETE FROM transactions WHERE id = ?;', id);
+  await db.runAsync("DELETE FROM transactions WHERE id = ?;", id);
 }
