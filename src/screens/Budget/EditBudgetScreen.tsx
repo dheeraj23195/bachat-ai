@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,133 +6,173 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { RootStackParamList } from "../../navigation/RootNavigator";
-import colors from "../../lib/colors";
-import { getBudgetById, updateBudget } from "../../services/budgets";
-import { Budget } from "../../lib/types";
+import { RootStackParamList } from '../../navigation/RootNavigator';
+import colors from '../../lib/colors';
+import { CurrencyCode } from '../../lib/types';
+import { updateBudget, getBudgetById } from '../../services/budgets';
+import { listCategories } from '../../services/categories';
+import { Category } from '../../lib/types'; // Adjust the path according to your file structure
 
-type Props = NativeStackScreenProps<RootStackParamList, "EditBudget">;
+type Props = NativeStackScreenProps<RootStackParamList, 'EditBudget'>;
+
+const ALERT_THRESHOLDS = [70, 80, 90, 100];
 
 const EditBudgetScreen: React.FC<Props> = ({ route, navigation }) => {
   const { budgetId } = route.params;
-  const [budget, setBudget] = useState<Budget | null>(null);
-  const [limitAmount, setLimitAmount] = useState("");
-  const [alertThreshold, setAlertThreshold] = useState("");
-  const [saving, setSaving] = useState(false);
 
+  const [categories, setCategories] = useState<Category[]>([]); // <- specify Category[] type
+  const [budget, setBudget] = useState<any>(null); // stores current budget
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(''); // Initialize with empty string
+  const [limitAmount, setLimitAmount] = useState<string>('');
+  const [alertThreshold, setAlertThreshold] = useState<number>(80);
+  const [categoryColor, setCategoryColor] = useState<string>(colors.primary); // Ensure it's never undefined or null
+  const [isSaving, setIsSaving] = useState(false);
+
+  const currency: CurrencyCode = 'INR';
+
+  // Fetch categories and current budget
   useEffect(() => {
-    const load = async () => {
+    const loadData = async () => {
       try {
-        const b = await getBudgetById(budgetId);
-        if (!b) {
-          Alert.alert("Not found", "Budget could not be found.");
-          navigation.goBack();
-          return;
+        const [categoryRows, currentBudget] = await Promise.all([
+          listCategories(),
+          getBudgetById(budgetId),
+        ]);
+
+        setCategories(categoryRows);
+        setBudget(currentBudget);
+
+        if (currentBudget) {
+          setSelectedCategoryId(currentBudget.categoryId || '');  // Default to empty string if categoryId is null
+          setLimitAmount(currentBudget.limitAmount.toString());
+          setAlertThreshold(currentBudget.alertThresholdPercent);
+          setCategoryColor(currentBudget.categoryId ? categoryRows.find((cat) => cat.id === currentBudget.categoryId)?.colorHex ?? colors.primary : colors.primary);
         }
-        setBudget(b);
-        setLimitAmount(String(b.limitAmount));
-        setAlertThreshold(String(b.alertThresholdPercent));
       } catch (e) {
-        console.error("Failed to load budget", e);
-        Alert.alert("Error", "Could not load this budget.");
-        navigation.goBack();
+        console.error('Failed to load data', e);
       }
     };
-    load();
-  }, [budgetId, navigation]);
+
+    loadData();
+  }, [budgetId]);
 
   const handleSave = async () => {
-    if (!budget || saving) return;
+    if (isSaving) return;
 
-    const numericLimit = parseFloat(limitAmount.replace(/[^0-9.]/g, ""));
-    const numericAlert = parseFloat(alertThreshold.replace(/[^0-9.]/g, ""));
-
+    // Validate the limit
+    const numericLimit = parseFloat(limitAmount.replace(/[^0-9.]/g, ''));
     if (!numericLimit || numericLimit <= 0) {
-      Alert.alert("Invalid amount", "Please enter a valid budget limit.");
+      Alert.alert('Invalid amount', 'Please enter a valid monthly budget.');
       return;
     }
 
-    if (Number.isNaN(numericAlert) || numericAlert < 0 || numericAlert > 100) {
-      Alert.alert(
-        "Invalid alert",
-        "Alert threshold must be between 0 and 100."
-      );
-      return;
-    }
-
+    // Create or update the budget
     try {
-      setSaving(true);
-      await updateBudget(budget.id, {
+      setIsSaving(true);
+
+      await updateBudget(budgetId, {
+        categoryId: selectedCategoryId,
         limitAmount: numericLimit,
-        alertThresholdPercent: numericAlert,
+        alertThresholdPercent: alertThreshold,
+        isActive: true,
       });
+
       navigation.goBack();
     } catch (e) {
-      console.error("Failed to update budget", e);
-      Alert.alert("Error", "Something went wrong while saving your changes.");
+      console.error('Failed to save budget', e);
+      Alert.alert('Error', 'Something went wrong while saving your budget.');
     } finally {
-      setSaving(false);
+      setIsSaving(false);
     }
   };
 
-  if (!budget) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.container}>
-          <Text style={styles.loadingText}>Loading budget…</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const categoryLabel = budget.categoryId ?? "Overall";
+  // Handle category selection (other category selection logic)
+  const handleCategorySelect = (categoryId: string) => {
+    setSelectedCategoryId(categoryId);
+    const selectedCategory = categories.find((cat) => cat.id === categoryId);
+    setCategoryColor(selectedCategory?.colorHex ?? colors.primary);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Edit Budget</Text>
-          <Text style={styles.headerSubtitle}>{categoryLabel} • Monthly</Text>
+        {/* Header */}
+        <Text style={styles.headerTitle}>Edit Budget</Text>
+        <Text style={styles.headerSubtitle}>Update your budget details</Text>
+
+        {/* Category selection */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Category</Text>
+          <View style={styles.chipRowWrap}>
+            {categories.map((cat) => (
+              <TouchableOpacity
+                key={cat.id}
+                style={[
+                  styles.chip,
+                  selectedCategoryId === cat.id && styles.chipSelected,
+                ]}
+                onPress={() => handleCategorySelect(cat.id)}
+                activeOpacity={0.8}
+              >
+                <View
+                  style={[styles.chipColorDot, { backgroundColor: cat.colorHex || colors.primary }]}  // Use fallback color
+                />
+                <Text
+                  style={[
+                    styles.chipText,
+                    selectedCategoryId === cat.id && styles.chipTextSelected,
+                  ]}
+                >
+                  {cat.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
+        {/* Limit amount */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Monthly limit</Text>
-          <View style={styles.amountRow}>
-            <Text style={styles.currencySymbol}>₹</Text>
-            <TextInput
-              style={styles.amountInput}
-              value={limitAmount}
-              onChangeText={setLimitAmount}
-              keyboardType="numeric"
-            />
-          </View>
+          <TextInput
+            style={styles.amountInput}
+            value={limitAmount}
+            onChangeText={setLimitAmount}
+            placeholder="Enter amount"
+            keyboardType="numeric"
+          />
         </View>
 
+        {/* Alert threshold */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Alert threshold (%)</Text>
-          <View style={styles.amountRow}>
-            <TextInput
-              style={styles.amountInput}
-              value={alertThreshold}
-              onChangeText={setAlertThreshold}
-              keyboardType="numeric"
-              placeholder="e.g. 80"
-              placeholderTextColor={colors.placeholder}
-            />
+          <Text style={styles.sectionLabel}>Alert threshold</Text>
+          <View style={styles.thresholdRow}>
+            {ALERT_THRESHOLDS.map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[
+                  styles.thresholdChip,
+                  alertThreshold === t && styles.thresholdChipSelected,
+                ]}
+                onPress={() => setAlertThreshold(t)}
+              >
+                <Text style={styles.thresholdText}>{t}%</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
 
+        {/* Save button */}
         <TouchableOpacity
           style={styles.saveButton}
           onPress={handleSave}
-          disabled={saving}
+          disabled={isSaving}
         >
           <Text style={styles.saveButtonText}>
-            {saving ? "Saving…" : "Save Changes"}
+            {isSaving ? 'Saving...' : 'Save Budget'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -141,77 +181,75 @@ const EditBudgetScreen: React.FC<Props> = ({ route, navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
+  safeArea: { flex: 1, backgroundColor: colors.background },
   container: {
-    flex: 1,
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 24,
   },
-  loadingText: {
-    marginTop: 20,
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  header: {
-    marginBottom: 20,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: colors.textPrimary,
-  },
-  headerSubtitle: {
-    marginTop: 4,
-    fontSize: 13,
-    color: colors.textSecondary,
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: colors.textPrimary,
-    marginBottom: 8,
-  },
-  amountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 16,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  headerTitle: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
+  headerSubtitle: { fontSize: 13, color: colors.textSecondary, marginTop: 4 },
+
+  section: { marginBottom: 20 },
+  sectionLabel: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
+  sectionHint: { fontSize: 12, color: colors.textSecondary, marginBottom: 8 },
+
+  chipRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: colors.surface,
+    marginRight: 8,
+    marginBottom: 8,
   },
-  currencySymbol: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: colors.textSecondary,
-    marginRight: 4,
+  chipSelected: { backgroundColor: colors.primary, borderColor: colors.primaryDark },
+  chipText: { fontSize: 13, color: colors.textPrimary },
+  chipTextSelected: { color: '#FFFFFF', fontWeight: '600' },
+  chipColorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
   },
+
   amountInput: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "500",
+    fontSize: 20,
+    fontWeight: '600',
     color: colors.textPrimary,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
+
+  thresholdRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  thresholdChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: colors.surface,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  thresholdChipSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
+  },
+  thresholdText: { fontSize: 13, color: colors.textPrimary },
+
   saveButton: {
-    marginTop: 8,
     backgroundColor: colors.primary,
     borderRadius: 24,
     paddingVertical: 14,
-    alignItems: "center",
+    alignItems: 'center',
   },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
+  saveButtonText: { fontSize: 16, color: '#FFFFFF', fontWeight: '600' },
 });
 
 export default EditBudgetScreen;

@@ -8,6 +8,7 @@ import RootNavigator from './src/navigation/RootNavigator';
 import { initDatabase } from './src/services/db';
 import { useTransactionsStore } from './src/store/useTransactionsStore';
 import { listTransactions } from './src/services/transactions';
+import { ensureDefaultCategories } from './src/services/categories';
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -19,6 +20,7 @@ export default function App() {
     (async () => {
       try {
         await initDatabase();
+        await ensureDefaultCategories(); 
         await loadTransactions();  
         setReady(true);
       } catch (e: any) {

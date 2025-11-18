@@ -1,4 +1,6 @@
-import React, { useState } from "react";
+// src/screens/Budget/AddBudgetScreen.tsx
+
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -13,35 +15,53 @@ import { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import { RootStackParamList } from "../../navigation/RootNavigator";
 import colors from "../../lib/colors";
+
 import { createBudget, listBudgets } from "../../services/budgets";
-import { CurrencyCode } from "../../lib/types";
+import { CurrencyCode, Category } from "../../lib/types";
+
+import {
+  listCategories,
+  ensureCategoryByName,
+} from "../../services/categories";
 
 type Props = NativeStackScreenProps<RootStackParamList, "AddBudget">;
-
-const CATEGORY_OPTIONS = [
-  { id: "food", label: "Food & Dining", color: "#F97316" },
-  { id: "transport", label: "Transport", color: "#6366F1" },
-  { id: "shopping", label: "Shopping", color: "#EC4899" },
-  { id: "subscriptions", label: "Subscriptions", color: "#A855F7" },
-  { id: "bills", label: "Bills & Utilities", color: "#22C55E" },
-  { id: "other", label: "Other (custom)", color: "#6B7280" },
-];
 
 const ALERT_THRESHOLDS = [70, 80, 90, 100];
 
 const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("food");
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
+    null
+  );
   const [customCategoryName, setCustomCategoryName] = useState("");
+
   const [limitAmount, setLimitAmount] = useState("");
   const [alertThreshold, setAlertThreshold] = useState<number>(80);
   const [isSaving, setIsSaving] = useState(false);
 
   const currency: CurrencyCode = "INR";
 
+  /* ---------------------------------------------
+   * Load categories from DB
+   * --------------------------------------------- */
+  useEffect(() => {
+    (async () => {
+      const rows = await listCategories();
+      setCategories(rows);
+
+      if (rows.length > 0) {
+        setSelectedCategoryId(rows[0].id);
+      }
+    })();
+  }, []);
+
+  /* ---------------------------------------------
+   * Save
+   * --------------------------------------------- */
   const handleSave = async () => {
     if (isSaving) return;
 
-    // Validate amount
+    // Validate limit amount
     const numericLimit = parseFloat(limitAmount.replace(/[^0-9.]/g, ""));
     if (!numericLimit || numericLimit <= 0) {
       Alert.alert("Invalid amount", "Please enter a valid monthly budget.");
@@ -49,50 +69,63 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
     }
 
     if (!selectedCategoryId) {
-      Alert.alert(
-        "Choose a category",
-        "Please select a category for this budget."
-      );
+      Alert.alert("Choose a category", "Please select a category.");
       return;
     }
 
-    // Resolve categoryId to save
-    let categoryIdToSave = selectedCategoryId;
-    if (selectedCategoryId === "other") {
+    /* ---------------------------------------------
+     * Resolve final category (from DB or custom)
+     * --------------------------------------------- */
+    let finalCategory: Category | null = null;
+
+    if (selectedCategoryId === "custom") {
       const trimmed = customCategoryName.trim();
+
       if (!trimmed) {
         Alert.alert(
           "Custom category required",
-          "Please type a name for your custom category."
+          "Please type a category name."
         );
         return;
       }
-      categoryIdToSave = trimmed; // store user-defined name as categoryId
+
+      // Create category if not exists, or return existing
+      finalCategory = await ensureCategoryByName(trimmed);
+    } else {
+      finalCategory =
+        categories.find((c) => c.id === selectedCategoryId) ?? null;
     }
 
-    // Duplicate check (case-insensitive)
-    try {
-      const existingBudgets = await listBudgets();
-      const target = categoryIdToSave.toLowerCase();
+    if (!finalCategory) {
+      Alert.alert("Error", "Could not resolve category.");
+      return;
+    }
 
-      const exists = existingBudgets.some((b) => {
-        if (!b.categoryId) return false;
-        return b.categoryId.toLowerCase() === target;
-      });
+    const categoryIdToSave = finalCategory.id;
+
+    /* ---------------------------------------------
+     * Prevent duplicate budgets for same category
+     * --------------------------------------------- */
+    try {
+      const existing = await listBudgets();
+      const exists = existing.some(
+        (b) => b.categoryId === categoryIdToSave
+      );
 
       if (exists) {
         Alert.alert(
           "Budget already exists",
-          "You already have a budget for this category. Edit or delete that budget instead of creating a duplicate."
+          "You already have a budget for this category. Edit or delete it instead."
         );
         return;
       }
-    } catch (e) {
-      console.error("Failed to check existing budgets", e);
-      // We still allow save if duplicate check fails, to avoid blocking user
+    } catch (err) {
+      console.error("Failed to check existing budgets", err);
     }
 
-    // Create budget
+    /* ---------------------------------------------
+     * Save
+     * --------------------------------------------- */
     try {
       setIsSaving(true);
 
@@ -108,24 +141,22 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
 
       navigation.goBack();
     } catch (e) {
-      console.error("Failed to create budget", e);
-      Alert.alert(
-        "Error",
-        "Something went wrong while saving your budget. Please try again."
-      );
+      console.error("Create budget failed", e);
+      Alert.alert("Error", "Failed to create budget. Please try again.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  const selectedCategory = CATEGORY_OPTIONS.find(
-    (c) => c.id === selectedCategoryId
-  );
+  const selectedCategory =
+    selectedCategoryId === "custom"
+      ? null
+      : categories.find((c) => c.id === selectedCategoryId) ?? null;
 
   const previewName =
-    selectedCategoryId === "other" && customCategoryName.trim()
-      ? customCategoryName.trim()
-      : selectedCategory?.label;
+    selectedCategoryId === "custom"
+      ? customCategoryName.trim() || "Custom category"
+      : selectedCategory?.name;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -142,48 +173,70 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
           </Text>
         </View>
 
-        {/* Category selection with colors */}
+        {/* Category Selection */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Category</Text>
+
           <View style={styles.chipRowWrap}>
-            {CATEGORY_OPTIONS.map((cat) => (
+            {categories.map((cat) => (
               <TouchableOpacity
                 key={cat.id}
                 style={[
                   styles.chip,
                   selectedCategoryId === cat.id && styles.chipSelected,
                 ]}
-                onPress={() => setSelectedCategoryId(cat.id)}
-                activeOpacity={0.8}
+                onPress={() => {
+                  setSelectedCategoryId(cat.id);
+                  setCustomCategoryName("");
+                }}
               >
                 <View
-                  style={[styles.chipColorDot, { backgroundColor: cat.color }]}
+                  style={[
+                    styles.chipColorDot,
+                    { backgroundColor: cat.colorHex ?? "#6B7280" },
+                  ]}
                 />
                 <Text
                   style={[
                     styles.chipText,
-                    selectedCategoryId === cat.id && styles.chipTextSelected,
+                    selectedCategoryId === cat.id &&
+                      styles.chipTextSelected,
                   ]}
                 >
-                  {cat.label}
+                  {cat.name}
                 </Text>
               </TouchableOpacity>
             ))}
+
+            {/* Custom Category */}
+            <TouchableOpacity
+              style={[
+                styles.chip,
+                selectedCategoryId === "custom" && styles.chipSelected,
+              ]}
+              onPress={() => setSelectedCategoryId("custom")}
+            >
+              <Text
+                style={[
+                  styles.chipText,
+                  selectedCategoryId === "custom" &&
+                    styles.chipTextSelected,
+                ]}
+              >
+                + Custom
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Custom category name when "Other" is selected */}
-          {selectedCategoryId === "other" && (
+          {selectedCategoryId === "custom" && (
             <View style={{ marginTop: 12 }}>
-              <Text style={styles.sectionHint}>
-                Type a custom name for this category (e.g. &quot;Gym&quot;,
-                &quot;Pet Care&quot;).
-              </Text>
+              <Text style={styles.sectionHint}>Type category name</Text>
               <View style={styles.customCategoryInputWrapper}>
                 <TextInput
                   style={styles.customCategoryInput}
                   value={customCategoryName}
                   onChangeText={setCustomCategoryName}
-                  placeholder="Custom category name"
+                  placeholder="e.g. Gym, Pet Care"
                   placeholderTextColor={colors.placeholder}
                 />
               </View>
@@ -191,7 +244,7 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
           )}
         </View>
 
-        {/* Limit amount */}
+        {/* Limit */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Monthly limit</Text>
           <View style={styles.amountRow}>
@@ -211,9 +264,9 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Alert threshold</Text>
           <Text style={styles.sectionHint}>
-            We&apos;ll remind you when your spend crosses this percentage of the
-            budget.
+            We'll notify you when spending crosses this percentage.
           </Text>
+
           <View style={styles.thresholdRow}>
             {ALERT_THRESHOLDS.map((t) => (
               <TouchableOpacity
@@ -223,7 +276,6 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
                   alertThreshold === t && styles.thresholdChipSelected,
                 ]}
                 onPress={() => setAlertThreshold(t)}
-                activeOpacity={0.8}
               >
                 <Text
                   style={[
@@ -246,7 +298,8 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
                 style={[
                   styles.previewColorDot,
                   {
-                    backgroundColor: selectedCategory?.color ?? colors.primary,
+                    backgroundColor:
+                      selectedCategory?.colorHex ?? colors.primary,
                   },
                 ]}
               />
@@ -258,16 +311,15 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
                     ? Number(
                         limitAmount.replace(/[^0-9.]/g, "")
                       ).toLocaleString()
-                    : "0"}
-                  {" · "}
-                  Alert at {alertThreshold}% usage
+                    : "0"}{" "}
+                  · Alert at {alertThreshold}%
                 </Text>
               </View>
             </View>
           </View>
         )}
 
-        {/* Save button */}
+        {/* Save */}
         <TouchableOpacity
           style={styles.saveButton}
           onPress={handleSave}
@@ -282,22 +334,19 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
   );
 };
 
+/* --------------------------------------------- */
+/* Styles */
+/* --------------------------------------------- */
+
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  container: {
-    flex: 1,
-  },
+  safeArea: { flex: 1, backgroundColor: colors.background },
+  container: { flex: 1 },
   contentContainer: {
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 24,
   },
-  header: {
-    marginBottom: 16,
-  },
+  header: { marginBottom: 16 },
   headerTitle: {
     fontSize: 22,
     fontWeight: "700",
@@ -308,9 +357,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
   },
-  section: {
-    marginBottom: 20,
-  },
+  section: { marginBottom: 20 },
   sectionLabel: {
     fontSize: 14,
     fontWeight: "500",
@@ -349,14 +396,8 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     marginRight: 6,
   },
-  chipText: {
-    fontSize: 13,
-    color: colors.textPrimary,
-  },
-  chipTextSelected: {
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
+  chipText: { fontSize: 13, color: colors.textPrimary },
+  chipTextSelected: { color: "#FFFFFF", fontWeight: "600" },
   customCategoryInputWrapper: {
     borderRadius: 12,
     borderWidth: 1,
@@ -391,10 +432,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.textPrimary,
   },
-  thresholdRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
+  thresholdRow: { flexDirection: "row", flexWrap: "wrap" },
   thresholdChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -409,14 +447,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderColor: colors.primaryDark,
   },
-  thresholdText: {
-    fontSize: 13,
-    color: colors.textPrimary,
-  },
-  thresholdTextSelected: {
-    color: "#FFFFFF",
-    fontWeight: "600",
-  },
+  thresholdText: { fontSize: 13, color: colors.textPrimary },
+  thresholdTextSelected: { color: "#FFFFFF", fontWeight: "600" },
   previewCard: {
     marginTop: 4,
     marginBottom: 20,
@@ -426,10 +458,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  previewHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+  previewHeader: { flexDirection: "row", alignItems: "center" },
   previewColorDot: {
     width: 16,
     height: 16,
@@ -453,11 +482,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: "center",
   },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
+  saveButtonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
 });
 
 export default AddBudgetScreen;
