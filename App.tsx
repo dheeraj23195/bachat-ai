@@ -4,11 +4,10 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, View, Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-
 import RootNavigator from './src/navigation/RootNavigator';
 import { initDatabase } from './src/services/db';
 import { useTransactionsStore } from './src/store/useTransactionsStore';
-
+import { listTransactions } from './src/services/transactions';
 
 export default function App() {
   const [ready, setReady] = useState(false);

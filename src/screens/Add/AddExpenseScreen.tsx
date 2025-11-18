@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,62 +6,229 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
-import { AppTabParamList } from "../../navigation/AppTabs";
-import colors from "../../lib/colors";
-import { createTransaction } from "../../services/transactions";
-import { CurrencyCode, PaymentMethod } from "../../lib/types";
-import { useNavigation } from "@react-navigation/native";
-import { useTransactionsStore } from "../../store/useTransactionsStore";
+  Alert,
+  Platform,
+} from 'react-native';
+import DateTimePicker, {
+  DateTimePickerEvent,
+} from '@react-native-community/datetimepicker';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { useNavigation } from '@react-navigation/native';
+import { format, parseISO } from 'date-fns';
 
-const CATEGORY_OPTIONS = [
-  { id: "food", label: "Food & Dining" },
-  { id: "transport", label: "Transport" },
-  { id: "shopping", label: "Shopping" },
-  { id: "subscriptions", label: "Subscriptions" },
-  { id: "bills", label: "Bills & Utilities" },
-  { id: "other", label: "Other" },
-] as const;
+import { AppTabParamList } from '../../navigation/AppTabs';
+import colors from '../../lib/colors';
+import { createTransaction } from '../../services/transactions';
+import { CurrencyCode, PaymentMethod } from '../../lib/types';
+import { useTransactionsStore } from '../../store/useTransactionsStore';
+import { listBudgets } from '../../services/budgets';
 
-type Props = BottomTabScreenProps<AppTabParamList, "Add">;
+type Props = BottomTabScreenProps<AppTabParamList, 'Add'>;
+
+type CategoryOption = {
+  id: string;
+  label: string;
+};
+
+// Built-in pretty labels for known ids
+const BUILTIN_CATEGORY_LABELS: Record<string, string> = {
+  food: 'Food & Dining',
+  transport: 'Transport',
+  shopping: 'Shopping',
+  subscriptions: 'Subscriptions',
+  bills: 'Bills & Utilities',
+};
+
+// Fallback initial categories if there are no budgets yet
+const FALLBACK_CATEGORY_OPTIONS: CategoryOption[] = [
+  { id: 'food', label: 'Food & Dining' },
+  { id: 'transport', label: 'Transport' },
+  { id: 'shopping', label: 'Shopping' },
+  { id: 'subscriptions', label: 'Subscriptions' },
+  { id: 'bills', label: 'Bills & Utilities' },
+];
+
+// Simple recurring model for now
+type RecurringFrequency = 'daily' | 'weekly' | 'monthly';
 
 const AddExpenseScreen: React.FC<Props> = () => {
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("food");
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([
+    ...FALLBACK_CATEGORY_OPTIONS,
+    { id: 'other', label: 'Other' },
+  ]);
+  const [selectedCategoryId, setSelectedCategoryId] =
+    useState<string>('food');
+
   const [isRecurring, setIsRecurring] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("Card");
+  const [recurringFrequency, setRecurringFrequency] =
+    useState<RecurringFrequency>('monthly');
+  const [recurringWeekdays, setRecurringWeekdays] = useState<string[]>([]);
+  const [recurringMonthDay, setRecurringMonthDay] = useState<string>('');
+
+  const [amount, setAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] =
+    useState<PaymentMethod>('UPI');
+  const [customPaymentMethod, setCustomPaymentMethod] = useState('');
   const [date, setDate] = useState<string>(new Date().toISOString());
-  const [note, setNote] = useState("");
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [note, setNote] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const currency: CurrencyCode = "INR";
+
+  const currency: CurrencyCode = 'INR';
 
   const navigation = useNavigation();
   const addLocalTransaction = useTransactionsStore(
     (s) => s.addLocalTransaction
   );
+  const scrollRef = useRef<ScrollView | null>(null);
+
+  // ----- Load categories from budgets so new budget categories appear here -----
+  useEffect(() => {
+    const loadCategoriesFromBudgets = async () => {
+      try {
+        const budgets = await listBudgets({ activeOnly: true });
+
+        const ids = Array.from(
+          new Set(
+            budgets
+              .map((b) => b.categoryId)
+              .filter((id): id is string => !!id)
+          )
+        );
+
+        if (ids.length === 0) {
+          // keep fallback categories
+          return;
+        }
+
+        const opts: CategoryOption[] = ids.map((id) => ({
+          id,
+          label: BUILTIN_CATEGORY_LABELS[id] ?? id,
+        }));
+
+        // always keep an "Other" option
+        opts.push({ id: 'other', label: 'Other' });
+
+        setCategoryOptions(opts);
+
+        // If current selected category is not present, default to the first
+        if (!opts.find((c) => c.id === selectedCategoryId)) {
+          setSelectedCategoryId(opts[0]?.id ?? '');
+        }
+      } catch (e) {
+        console.error('Failed to load budget categories for AddExpense', e);
+      }
+    };
+
+    loadCategoriesFromBudgets();
+  }, [selectedCategoryId]);
+
+  const formattedHeaderDate = useMemo(() => {
+    try {
+      return format(parseISO(date), 'dd MMM yyyy');
+    } catch {
+      return '';
+    }
+  }, [date]);
+
+  const aiPrediction = {
+    label: 'Food & Dining',
+    confidence: 0.86,
+    why: 'Matched keywords from past similar transactions at Zomato / Swiggy',
+  };
+
+  const handleDateChange = (
+    event: DateTimePickerEvent,
+    selected?: Date
+  ) => {
+    if (event.type === 'dismissed') {
+      setShowDatePicker(false);
+      return;
+    }
+    const chosen = selected || new Date(date);
+    setDate(chosen.toISOString());
+    if (Platform.OS !== 'ios') {
+      setShowDatePicker(false);
+    }
+  };
+
+  // Toggle weekday in recurringWeekdays (for weekly rule)
+  const toggleWeekday = (code: string) => {
+    setRecurringWeekdays((prev) =>
+      prev.includes(code)
+        ? prev.filter((d) => d !== code)
+        : [...prev, code]
+    );
+  };
+
+  // Build recurringRule JSON string
+  const buildRecurringRule = (): string | null => {
+    if (!isRecurring) return null;
+
+    const rule: any = {
+      frequency: recurringFrequency,
+    };
+
+    if (recurringFrequency === 'weekly') {
+      rule.weekdays = recurringWeekdays;
+    } else if (recurringFrequency === 'monthly') {
+      const dayNum = parseInt(recurringMonthDay, 10);
+      if (!Number.isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) {
+        rule.monthDay = dayNum;
+      }
+    }
+
+    return JSON.stringify(rule);
+  };
+
+  const resetForm = () => {
+    setSelectedCategoryId(categoryOptions[0]?.id ?? 'food');
+    setIsRecurring(false);
+    setRecurringFrequency('monthly');
+    setRecurringWeekdays([]);
+    setRecurringMonthDay('');
+    setAmount('');
+    setPaymentMethod('UPI');
+    setCustomPaymentMethod('');
+    setDate(new Date().toISOString());
+    setNote('');
+    setShowDatePicker(false); // 👈 close calendar if it was open
+
+    // Scroll back to top (optional but feels nicer)
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+  };
+
 
   const handleSaveExpense = async () => {
     if (isSaving) return;
 
     // Validate amount
-    const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ""));
+    const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ''));
     if (!numericAmount || numericAmount <= 0) {
-      console.log("Amount is invalid");
+      Alert.alert('Invalid amount', 'Please enter a valid amount.');
       return;
     }
 
     // Validate category
     if (!selectedCategoryId) {
-      console.log('Category is required');
+      Alert.alert('Choose a category', 'Please select a category.');
       return;
     }
+
+    const recurringRule = buildRecurringRule();
+
+    // Attach custom payment method into metadataJson (but keep PaymentMethod type safe)
+    const metadata: Record<string, any> = {};
+    if (paymentMethod === 'Other' && customPaymentMethod.trim()) {
+      metadata.customPaymentMethod = customPaymentMethod.trim();
+    }
+    const metadataJson =
+      Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
 
     try {
       setIsSaving(true);
 
-      // Create transaction
       const saved = await createTransaction({
         type: 'expense',
         amount: numericAmount,
@@ -71,33 +238,36 @@ const AddExpenseScreen: React.FC<Props> = () => {
         paymentMethod,
         note: note || null,
         merchant: null,
-        metadataJson: null,
+        metadataJson,
         isRecurring,
+        recurringRule,
         source: 'manual',
       });
 
-
-      // Update global state immediately
       addLocalTransaction(saved);
 
-      // Go back after save
-      navigation.goBack();
+      Alert.alert('Expense saved', 'Your expense has been added.', [
+        { text: 'OK' },
+      ]);
+
+      resetForm();
     } catch (err) {
-      console.error("Failed to save transaction", err);
+      console.error('Failed to save transaction', err);
+      Alert.alert(
+        'Error',
+        'Something went wrong while saving your expense. Please try again.'
+      );
     } finally {
       setIsSaving(false);
     }
   };
 
-  const aiPrediction = {
-    label: "Food & Dining",
-    confidence: 0.86,
-    why: "Matched keywords from past similar transactions at Zomato / Swiggy",
-  };
+  const showRecurringDetails = isRecurring;
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
+        ref={scrollRef}
         style={styles.container}
         contentContainerStyle={styles.contentContainer}
         keyboardShouldPersistTaps="handled"
@@ -106,7 +276,9 @@ const AddExpenseScreen: React.FC<Props> = () => {
         {/* Header */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Add Expense</Text>
-          <Text style={styles.headerSubtitle}>Today · 12 Nov 2025</Text>
+          <Text style={styles.headerSubtitle}>
+            {formattedHeaderDate ? `On ${formattedHeaderDate}` : ''}
+          </Text>
         </View>
 
         {/* AI Prediction Card */}
@@ -117,7 +289,9 @@ const AddExpenseScreen: React.FC<Props> = () => {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.aiTitle}>AI Category Suggestion</Text>
-              <Text style={styles.aiSubtitle}>Local, on-device prediction</Text>
+              <Text style={styles.aiSubtitle}>
+                Local, on-device prediction
+              </Text>
             </View>
             <View style={styles.aiConfidencePill}>
               <Text style={styles.aiConfidenceText}>
@@ -130,7 +304,9 @@ const AddExpenseScreen: React.FC<Props> = () => {
             <View>
               <Text style={styles.aiLabel}>Suggested Category</Text>
               <View style={styles.aiCategoryPill}>
-                <Text style={styles.aiCategoryText}>{aiPrediction.label}</Text>
+                <Text style={styles.aiCategoryText}>
+                  {aiPrediction.label}
+                </Text>
               </View>
             </View>
           </View>
@@ -155,6 +331,28 @@ const AddExpenseScreen: React.FC<Props> = () => {
           </View>
         </View>
 
+        {/* Date */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Date</Text>
+          <TouchableOpacity
+            style={styles.dateButton}
+            onPress={() => setShowDatePicker(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.dateButtonText}>
+              {formattedHeaderDate || 'Select date'}
+            </Text>
+          </TouchableOpacity>
+          {showDatePicker && (
+            <DateTimePicker
+              value={parseISO(date)}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              onChange={handleDateChange}
+            />
+          )}
+        </View>
+
         {/* Note / description */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Description</Text>
@@ -176,32 +374,46 @@ const AddExpenseScreen: React.FC<Props> = () => {
           <View style={styles.chipRow}>
             <Chip
               label="UPI"
-              selected={paymentMethod === "UPI"}
-              onPress={() => setPaymentMethod("UPI")}
+              selected={paymentMethod === 'UPI'}
+              onPress={() => setPaymentMethod('UPI')}
             />
             <Chip
               label="Cash"
-              selected={paymentMethod === "Cash"}
-              onPress={() => setPaymentMethod("Cash")}
+              selected={paymentMethod === 'Cash'}
+              onPress={() => setPaymentMethod('Cash')}
             />
             <Chip
               label="Card"
-              selected={paymentMethod === "Card"}
-              onPress={() => setPaymentMethod("Card")}
+              selected={paymentMethod === 'Card'}
+              onPress={() => setPaymentMethod('Card')}
             />
             <Chip
               label="Other"
-              selected={paymentMethod === "Other"}
-              onPress={() => setPaymentMethod("Other")}
+              selected={paymentMethod === 'Other'}
+              onPress={() => setPaymentMethod('Other')}
             />
           </View>
+
+          {paymentMethod === 'Other' && (
+            <View style={{ marginTop: 10 }}>
+              <View style={styles.inputWrapper}>
+                <TextInput
+                  style={styles.textInput}
+                  value={customPaymentMethod}
+                  onChangeText={setCustomPaymentMethod}
+                  placeholder="Type payment method (e.g. Sodexo, PayPal…) "
+                  placeholderTextColor={colors.placeholder}
+                />
+              </View>
+            </View>
+          )}
         </View>
 
         {/* Category */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Category</Text>
           <View style={styles.chipRowWrap}>
-            {CATEGORY_OPTIONS.map((cat) => (
+            {categoryOptions.map((cat) => (
               <Chip
                 key={cat.id}
                 label={cat.label}
@@ -235,11 +447,77 @@ const AddExpenseScreen: React.FC<Props> = () => {
             <View style={{ flex: 1 }}>
               <Text style={styles.recurringTitle}>Recurring expense</Text>
               <Text style={styles.recurringSubtitle}>
-                Repeat this expense automatically every month
+                Repeat this expense automatically (rule stored locally)
               </Text>
             </View>
           </TouchableOpacity>
         </View>
+
+        {/* Recurring details */}
+        {showRecurringDetails && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Repeat frequency</Text>
+            <View style={styles.chipRow}>
+              <Chip
+                label="Daily"
+                selected={recurringFrequency === 'daily'}
+                onPress={() => setRecurringFrequency('daily')}
+              />
+              <Chip
+                label="Weekly"
+                selected={recurringFrequency === 'weekly'}
+                onPress={() => setRecurringFrequency('weekly')}
+              />
+              <Chip
+                label="Monthly"
+                selected={recurringFrequency === 'monthly'}
+                onPress={() => setRecurringFrequency('monthly')}
+              />
+            </View>
+
+            {recurringFrequency === 'weekly' && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.sectionLabel}>Days of week</Text>
+                <View style={styles.chipRowWrap}>
+                  {[
+                    { code: 'MO', label: 'Mon' },
+                    { code: 'TU', label: 'Tue' },
+                    { code: 'WE', label: 'Wed' },
+                    { code: 'TH', label: 'Thu' },
+                    { code: 'FR', label: 'Fri' },
+                    { code: 'SA', label: 'Sat' },
+                    { code: 'SU', label: 'Sun' },
+                  ].map((d) => (
+                    <Chip
+                      key={d.code}
+                      label={d.label}
+                      selected={recurringWeekdays.includes(d.code)}
+                      onPress={() => toggleWeekday(d.code)}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {recurringFrequency === 'monthly' && (
+              <View style={{ marginTop: 12 }}>
+                <Text style={styles.sectionLabel}>
+                  Day of month (1–31)
+                </Text>
+                <View style={styles.amountRow}>
+                  <TextInput
+                    style={styles.amountInput}
+                    value={recurringMonthDay}
+                    onChangeText={setRecurringMonthDay}
+                    placeholder="e.g. 5"
+                    placeholderTextColor={colors.placeholder}
+                    keyboardType="number-pad"
+                  />
+                </View>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Save button */}
         <TouchableOpacity
@@ -248,7 +526,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
           disabled={isSaving}
         >
           <Text style={styles.saveButtonText}>
-            {isSaving ? "Saving…" : "Save Expense"}
+            {isSaving ? 'Saving…' : 'Save Expense'}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -294,7 +572,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 22,
-    fontWeight: "700",
+    fontWeight: '700',
     color: colors.textPrimary,
   },
   headerSubtitle: {
@@ -307,19 +585,19 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     padding: 16,
     borderRadius: 20,
-    backgroundColor: "#EEF2FF",
+    backgroundColor: '#EEF2FF',
   },
   aiHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   aiIconCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#FFFFFF",
-    justifyContent: "center",
-    alignItems: "center",
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
     marginRight: 12,
   },
   aiIcon: {
@@ -327,7 +605,7 @@ const styles = StyleSheet.create({
   },
   aiTitle: {
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: '600',
     color: colors.textPrimary,
   },
   aiSubtitle: {
@@ -339,12 +617,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "#DCFCE7",
+    backgroundColor: '#DCFCE7',
   },
   aiConfidenceText: {
     fontSize: 12,
-    fontWeight: "600",
-    color: "#16A34A",
+    fontWeight: '600',
+    color: '#16A34A',
   },
   aiBodyRow: {
     marginTop: 16,
@@ -356,20 +634,20 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   aiCategoryPill: {
-    alignSelf: "flex-start",
+    alignSelf: 'flex-start',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: "#EEF3FF",
+    backgroundColor: '#EEF3FF',
   },
   aiCategoryText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: '600',
     color: colors.primary,
   },
   aiWhyLabel: {
     fontSize: 12,
-    fontWeight: "500",
+    fontWeight: '500',
     color: colors.textSecondary,
     marginBottom: 2,
   },
@@ -382,30 +660,30 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: '500',
     color: colors.textPrimary,
     marginBottom: 8,
   },
   amountRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     borderRadius: 16,
     backgroundColor: colors.surface,
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderWidth: 1,
     borderColor: colors.border,
   },
   currencySymbol: {
     fontSize: 20,
-    fontWeight: "600",
+    fontWeight: '600',
     color: colors.textSecondary,
     marginRight: 4,
   },
   amountInput: {
     flex: 1,
-    fontSize: 24,
-    fontWeight: "600",
+    fontSize: 18,
+    fontWeight: '600',
     color: colors.textPrimary,
   },
   inputWrapper: {
@@ -421,13 +699,27 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     minHeight: 40,
   },
+  dateButton: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignSelf: 'flex-start',
+  },
+  dateButtonText: {
+    fontSize: 14,
+    color: colors.textPrimary,
+  },
   chipRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   chipRowWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   } as any,
   chip: {
@@ -449,12 +741,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   chipTextSelected: {
-    color: "#FFFFFF",
-    fontWeight: "600",
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   recurringRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   toggleOuter: {
     width: 44,
@@ -462,10 +754,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: '#E5E7EB',
     marginRight: 12,
     padding: 2,
-    justifyContent: "center",
+    justifyContent: 'center',
   },
   toggleOuterActive: {
     backgroundColor: colors.primary,
@@ -475,15 +767,15 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: "#FFFFFF",
-    alignSelf: "flex-start",
+    backgroundColor: '#FFFFFF',
+    alignSelf: 'flex-start',
   },
   toggleInnerActive: {
-    alignSelf: "flex-end",
+    alignSelf: 'flex-end',
   },
   recurringTitle: {
     fontSize: 14,
-    fontWeight: "500",
+    fontWeight: '500',
     color: colors.textPrimary,
   },
   recurringSubtitle: {
@@ -496,12 +788,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: 24,
     paddingVertical: 14,
-    alignItems: "center",
+    alignItems: 'center',
   },
   saveButtonText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#FFFFFF",
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });
 

@@ -1,73 +1,208 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import { AppTabParamList } from '../../navigation/AppTabs';
-import colors from '../../lib/colors';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import {
+  startOfMonth,
+  endOfMonth,
+  parseISO,
+  isWithinInterval,
+} from 'date-fns';
+
+import { AppTabParamList } from '../../navigation/AppTabs';
 import { RootStackParamList } from '../../navigation/RootNavigator';
+import colors from '../../lib/colors';
 import { useTransactionsStore } from '../../store/useTransactionsStore';
-import { startOfMonth, endOfMonth, parseISO, isWithinInterval } from 'date-fns';
-
-
+import { listBudgets, deleteBudget } from '../../services/budgets';
+import { Budget } from '../../lib/types';
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Budget'>;
 
+// Mapping from categoryId -> display name
+const CATEGORY_LABELS: Record<string, string> = {
+  food: 'Food & Dining',
+  transport: 'Transport',
+  shopping: 'Shopping',
+  subscriptions: 'Subscriptions',
+  bills: 'Bills & Utilities',
+  other: 'Other',
+};
+
+// Mapping from categoryId -> color
+const CATEGORY_COLORS: Record<string, string> = {
+  food: '#F97316',
+  transport: '#6366F1',
+  shopping: '#EC4899',
+  bills: '#22C55E',
+  subscriptions: '#A855F7',
+  other: '#6B7280',
+};
+
+type CategoryBudget = {
+  budgetId: string;
+  categoryId: string;
+  name: string;
+  spent: number;
+  limit: number;
+  color: string;
+};
+
 const BudgetScreen: React.FC<Props> = () => {
-  const totalBudget = 15000;
-  const totalSpent = 6000;
-  const totalRemaining = totalBudget - totalSpent;
-  const totalPercent = (totalSpent / totalBudget) * 100;
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const isFocused = useIsFocused();
 
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const handleAlerts = () => navigation.navigate('Alerts');
   const transactions = useTransactionsStore((s) => s.transactions);
-  
 
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [loadingBudgets, setLoadingBudgets] = useState(false);
 
-  const categoryBudgets: CategoryBudget[] = [
-    {
-      id: 'food',
-      name: 'Food & Dining',
-      spent: 4200,
-      limit: 5000,
-      color: '#F97316',
-    },
-    {
-      id: 'transport',
-      name: 'Transport',
-      spent: 1800,
-      limit: 2500,
-      color: '#6366F1',
-    },
-    {
-      id: 'shopping',
-      name: 'Shopping',
-      spent: 2300,
-      limit: 3000,
-      color: '#EC4899',
-    },
-    {
-      id: 'bills',
-      name: 'Bills & Utilities',
-      spent: 1200,
-      limit: 2000,
-      color: '#22C55E',
-    },
-  ];
+  const handleAlerts = () => navigation.navigate('Alerts');
+  const handleAddBudget = () => navigation.navigate('AddBudget');
 
-  const handleAddBudget = () => {
-    // TODO: open "Create / Edit Budget" screen later
-    console.log('Add / edit budget pressed');
+  // ---- Monthly expenses from real transactions ----
+  const now = new Date();
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  const monthlyExpenses = useMemo(
+    () =>
+      transactions.filter((tx) => {
+        if (tx.type !== 'expense') return false;
+        try {
+          const d = parseISO(tx.date);
+          return isWithinInterval(d, { start: monthStart, end: monthEnd });
+        } catch {
+          return false;
+        }
+      }),
+    [transactions, monthStart, monthEnd]
+  );
+
+  const totalSpent = useMemo(
+    () => monthlyExpenses.reduce((sum, tx) => sum + tx.amount, 0),
+    [monthlyExpenses]
+  );
+
+  const spendByCategory = useMemo(() => {
+    const map = new Map<string, number>();
+    monthlyExpenses.forEach((tx) => {
+      const key = tx.categoryId ?? 'uncategorized';
+      map.set(key, (map.get(key) || 0) + tx.amount);
+    });
+    return map;
+  }, [monthlyExpenses]);
+
+  // ---- Load budgets from DB ----
+  const loadBudgets = async () => {
+    setLoadingBudgets(true);
+    try {
+      const rows = await listBudgets({ activeOnly: true });
+      setBudgets(rows);
+    } catch (e) {
+      console.error('Failed to load budgets', e);
+    } finally {
+      setLoadingBudgets(false);
+    }
   };
 
+  useEffect(() => {
+    if (isFocused) {
+      loadBudgets();
+    }
+  }, [isFocused]);
+
+  // Overall total budget = sum of all active monthly budgets
+  const totalBudget = useMemo(
+    () =>
+      budgets
+        .filter((b) => b.period === 'monthly')
+        .reduce((sum, b) => sum + b.limitAmount, 0),
+    [budgets]
+  );
+
+  const totalRemaining = Math.max(0, totalBudget - totalSpent);
+  const totalPercent =
+    totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0;
+
+  // Build per-category budget cards from DB budgets
+  const categoryBudgets: CategoryBudget[] = useMemo(() => {
+    const list: CategoryBudget[] = budgets
+      .filter((b) => b.period === 'monthly' && b.categoryId !== null)
+      .map((b) => {
+        const catId = b.categoryId as string;
+        const spent = spendByCategory.get(catId) || 0;
+        const name = CATEGORY_LABELS[catId] ?? catId;
+        const color = CATEGORY_COLORS[catId] ?? colors.primary;
+
+        return {
+          budgetId: b.id,
+          categoryId: catId,
+          name,
+          spent,
+          limit: b.limitAmount,
+          color,
+        };
+      });
+
+    // Sort by spent descending
+    list.sort((a, b) => b.spent - a.spent);
+
+    return list;
+  }, [budgets, spendByCategory]);
+
+  const handleOpenAllTransactions = () => {
+    navigation.navigate('TransactionsList', {
+      categoryId: null,
+      title: 'All expenses (this month)',
+    });
+  };
+
+  const handleOpenCategoryTransactions = (categoryId: string, name: string) => {
+    navigation.navigate('TransactionsList', {
+      categoryId,
+      title: `${name} (this month)`,
+    });
+  };
+
+  const handleEditBudget = (budgetId: string) => {
+    navigation.navigate('EditBudget', { budgetId });
+  };
+
+  const handleDeleteBudget = (budgetId: string, name: string) => {
+    Alert.alert(
+      'Delete budget',
+      `Are you sure you want to delete the budget for "${name}"? This will not delete any transactions.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteBudget(budgetId);
+              await loadBudgets();
+            } catch (e) {
+              console.error('Failed to delete budget', e);
+              Alert.alert(
+                'Error',
+                'Something went wrong while deleting the budget.'
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -92,12 +227,18 @@ const BudgetScreen: React.FC<Props> = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Overall budget card */}
-        <View style={styles.overallCard}>
+        {/* Overall budget card (clickable) */}
+        <TouchableOpacity
+          style={styles.overallCard}
+          activeOpacity={0.85}
+          onPress={handleOpenAllTransactions}
+        >
           <View style={styles.overallRowTop}>
             <View>
               <Text style={styles.overallLabel}>Total Budget</Text>
-              <Text style={styles.overallAmount}>₹{totalBudget.toLocaleString()}</Text>
+              <Text style={styles.overallAmount}>
+                ₹{totalBudget.toLocaleString()}
+              </Text>
             </View>
             <View style={styles.overallRight}>
               <Text style={styles.overallRemainingLabel}>Remaining</Text>
@@ -142,7 +283,7 @@ const BudgetScreen: React.FC<Props> = () => {
             </View>
             <Text style={styles.alertsChipLink}>Manage</Text>
           </TouchableOpacity>
-        </View>
+        </TouchableOpacity>
 
         {/* Per-category budgets */}
         <View style={styles.section}>
@@ -151,29 +292,49 @@ const BudgetScreen: React.FC<Props> = () => {
             Track how you&apos;re spending across key categories
           </Text>
 
-          {categoryBudgets.map((b) => (
-            <CategoryBudgetCard key={b.id} budget={b} />
-          ))}
+          {loadingBudgets && categoryBudgets.length === 0 ? (
+            <Text style={styles.sectionSubtitle}>Loading budgets…</Text>
+          ) : categoryBudgets.length === 0 ? (
+            <Text style={styles.sectionSubtitle}>
+              You haven&apos;t created any budgets yet. Tap + to add one.
+            </Text>
+          ) : (
+            categoryBudgets.map((b) => (
+              <CategoryBudgetCard
+                key={b.budgetId}
+                budget={b}
+                onPress={() =>
+                  handleOpenCategoryTransactions(b.categoryId, b.name)
+                }
+                onEdit={() => handleEditBudget(b.budgetId)}
+                onDelete={() => handleDeleteBudget(b.budgetId, b.name)}
+              />
+            ))
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
   );
 };
 
-type CategoryBudget = {
-  id: string;
-  name: string;
-  spent: number;
-  limit: number;
-  color: string;
+type CategoryBudgetCardProps = {
+  budget: CategoryBudget;
+  onPress: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 };
 
-const CategoryBudgetCard: React.FC<{ budget: CategoryBudget }> = ({
+const CategoryBudgetCard: React.FC<CategoryBudgetCardProps> = ({
   budget,
+  onPress,
+  onEdit,
+  onDelete,
 }) => {
   const { name, spent, limit, color } = budget;
+  const [showActions, setShowActions] = useState(false);
+
   const remaining = limit - spent;
-  const percent = (spent / limit) * 100;
+  const percent = limit > 0 ? (spent / limit) * 100 : 0;
   const isOverspent = spent > limit;
   const statusLabel = isOverspent
     ? 'Overspent'
@@ -183,8 +344,17 @@ const CategoryBudgetCard: React.FC<{ budget: CategoryBudget }> = ({
 
   const statusColor = isOverspent ? '#EF4444' : percent > 80 ? '#F97316' : '#16A34A';
 
+  const handleLongPress = () => {
+    setShowActions((prev) => !prev);
+  };
+
   return (
-    <View style={styles.categoryCard}>
+    <TouchableOpacity
+      style={styles.categoryCard}
+      activeOpacity={0.85}
+      onPress={onPress}
+      onLongPress={handleLongPress}
+    >
       <View style={styles.categoryRowTop}>
         <View style={styles.categoryLeft}>
           <View
@@ -211,7 +381,10 @@ const CategoryBudgetCard: React.FC<{ budget: CategoryBudget }> = ({
 
       <View style={styles.categoryRowMiddle}>
         <Text style={styles.categoryRemaining}>
-          ₹{remaining >= 0 ? remaining.toLocaleString() : Math.abs(remaining).toLocaleString()}{' '}
+          ₹
+          {remaining >= 0
+            ? remaining.toLocaleString()
+            : Math.abs(remaining).toLocaleString()}{' '}
           {remaining >= 0 ? 'left' : 'over'}
         </Text>
         <View style={styles.statusPill}>
@@ -229,11 +402,33 @@ const CategoryBudgetCard: React.FC<{ budget: CategoryBudget }> = ({
         <View
           style={[
             styles.categoryProgressFill,
-            { width: `${Math.min(percent, 110)}%`, backgroundColor: color },
+            {
+              width: `${Math.min(percent, 110)}%`,
+              backgroundColor: color,
+            },
           ]}
         />
       </View>
-    </View>
+
+      {showActions && (
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            onPress={onEdit}
+            style={styles.actionButton}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.actionButtonText}>Edit</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onDelete}
+            style={[styles.actionButton, styles.actionButtonDanger]}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.actionButtonText}>Delete</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </TouchableOpacity>
   );
 };
 
@@ -477,6 +672,26 @@ const styles = StyleSheet.create({
   categoryProgressFill: {
     height: '100%',
     borderRadius: 999,
+  },
+  actionsRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  actionButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#E5E7EB',
+  },
+  actionButtonDanger: {
+    backgroundColor: '#FEE2E2',
+  },
+  actionButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textPrimary,
   },
 });
 

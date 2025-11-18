@@ -160,6 +160,95 @@ export async function createTransaction(
 }
 
 /**
+ * Batch-import many transactions in a single DB transaction.
+ * Useful for CSV import, backup restore, etc.
+ */
+export async function importTransactionsBatch(
+  inputs: CreateTransactionInput[]
+): Promise<Transaction[]> {
+  if (inputs.length === 0) return [];
+
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const created: Transaction[] = [];
+
+  await db.execAsync("BEGIN TRANSACTION;");
+
+  try {
+    for (const input of inputs) {
+      const id = generateId();
+      const { encryptedNote, encryptedMerchant, encryptedMetadata } =
+        prepareEncryptedFields(input);
+
+      const isRecurring = input.isRecurring ?? false;
+      const recurringRule = input.recurringRule ?? null;
+      const source = input.source ?? "manual";
+
+      await db.runAsync(
+        `
+        INSERT INTO transactions (
+          id,
+          type,
+          amount,
+          currency,
+          date,
+          category_id,
+          payment_method,
+          encrypted_note,
+          encrypted_merchant,
+          encrypted_metadata,
+          is_recurring,
+          recurring_rule,
+          source,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      `,
+        id,
+        input.type,
+        input.amount,
+        input.currency,
+        input.date,
+        input.categoryId ?? null,
+        input.paymentMethod,
+        encryptedNote,
+        encryptedMerchant,
+        encryptedMetadata,
+        isRecurring ? 1 : 0,
+        recurringRule,
+        source,
+        now,
+        now
+      );
+
+      created.push({
+        id,
+        type: input.type,
+        amount: input.amount,
+        currency: input.currency,
+        date: input.date,
+        categoryId: input.categoryId ?? null,
+        paymentMethod: input.paymentMethod,
+        encryptedNote,
+        encryptedMerchant,
+        encryptedMetadata,
+        isRecurring,
+        recurringRule,
+        source,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    await db.execAsync("COMMIT;");
+    return created;
+  } catch (err) {
+    await db.execAsync("ROLLBACK;");
+    throw err;
+  }
+}
+
+/**
  * Fetch a single transaction by id.
  */
 export async function getTransactionById(
