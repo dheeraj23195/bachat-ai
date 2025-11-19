@@ -8,17 +8,22 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { expandRecurringTransactionsForRange } from '../../services/transactions';
 
 import {
   startOfMonth,
   endOfMonth,
   parseISO,
   isWithinInterval,
+  format,
+  addMonths,
+  subMonths,
 } from 'date-fns';
 
 import { AppTabParamList } from '../../navigation/AppTabs';
@@ -31,6 +36,29 @@ import { listBudgets, deleteBudget } from '../../services/budgets';
 import { listCategories } from '../../services/categories';
 
 import { Budget, Category } from '../../lib/types';
+
+const MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+function getYearOptions(currentYear: number): number[] {
+  const years: number[] = [];
+  for (let y = currentYear - 3; y <= currentYear + 3; y++) {
+    years.push(y);
+  }
+  return years;
+}
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Budget'>;
 
@@ -53,8 +81,22 @@ const BudgetScreen: React.FC<Props> = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const monthStart = startOfMonth(new Date());
-  const monthEnd = endOfMonth(new Date());
+  const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+
+  const monthStart = useMemo(
+    () => startOfMonth(currentMonthDate),
+    [currentMonthDate]
+  );
+  const monthEnd = useMemo(
+    () => endOfMonth(currentMonthDate),
+    [currentMonthDate]
+  );
+  const expandedMonthlyTransactions = useMemo(
+    () => expandRecurringTransactionsForRange(transactions, monthStart, monthEnd),
+    [transactions, monthStart, monthEnd]
+  );
+
 
   // -------------------------------------------
   // Load categories + budgets from DB
@@ -98,17 +140,13 @@ const BudgetScreen: React.FC<Props> = () => {
   // -------------------------------------------
   // Monthly expenses
   // -------------------------------------------
-  const monthlyExpenses = useMemo(() => {
-    return transactions.filter((tx) => {
-      if (tx.type !== 'expense') return false;
-      try {
-        const d = parseISO(tx.date);
-        return isWithinInterval(d, { start: monthStart, end: monthEnd });
-      } catch {
-        return false;
-      }
-    });
-  }, [transactions]);
+
+
+// 2) Keep only expenses from that expanded list
+  const monthlyExpenses = useMemo(
+    () => expandedMonthlyTransactions.filter((tx) => tx.type === 'expense'),
+    [expandedMonthlyTransactions]
+  );
 
   const totalSpent = useMemo(
     () => monthlyExpenses.reduce((sum, tx) => sum + tx.amount, 0),
@@ -156,20 +194,34 @@ const BudgetScreen: React.FC<Props> = () => {
   const handleOpenAllTransactions = () => {
     navigation.navigate('TransactionsList', {
       categoryId: null,
-      title: 'All expenses (this month)',
+      title: `All expenses (${format(currentMonthDate, 'MMM yyyy')})`,
+      startDate: monthStart.toISOString(),
+      endDate: monthEnd.toISOString(),
     });
   };
+
 
   const handleOpenCategoryTransactions = (categoryId: string, name: string) => {
     navigation.navigate('TransactionsList', {
       categoryId,
-      title: `${name} (this month)`,
+      title: `${name} (${format(currentMonthDate, 'MMM yyyy')})`,
+      startDate: monthStart.toISOString(),
+      endDate: monthEnd.toISOString(),
     });
   };
 
+
   const handleEditBudget = (budgetId: string) => {
-    navigation.navigate('EditBudget', { budgetId });
+    navigation.navigate('EditBudgetCategory', { budgetId });
   };
+  const handlePrevMonth = () => {
+    setCurrentMonthDate(prev => subMonths(prev, 1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentMonthDate(prev => addMonths(prev, 1));
+  };
+
 
   const handleDeleteBudget = (budgetId: string, name: string) => {
     Alert.alert(
@@ -212,6 +264,27 @@ const BudgetScreen: React.FC<Props> = () => {
           </TouchableOpacity>
         </View>
 
+        {/* Month selector */}
+        <View style={styles.monthSelectorRow}>
+          <TouchableOpacity style={styles.monthArrow} onPress={handlePrevMonth}>
+            <Text style={styles.monthArrowText}>‹</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.monthLabelButton}
+            onPress={() => setShowMonthPicker(true)}
+          >
+            <Text style={styles.monthLabel}>
+              {format(currentMonthDate, 'MMMM yyyy')} ▼
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.monthArrow} onPress={handleNextMonth}>
+            <Text style={styles.monthArrowText}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+
         {/* Total Budget Card */}
         <TouchableOpacity
           style={styles.overallCard}
@@ -232,7 +305,7 @@ const BudgetScreen: React.FC<Props> = () => {
 
           <View style={styles.overallRowBottom}>
             <Text style={styles.overallSpentText}>
-              Spent ₹{totalSpent.toLocaleString()} this month
+              Spent ₹{totalSpent.toLocaleString()} in {format(currentMonthDate, 'MMM yyyy')}
             </Text>
             <Text style={styles.overallPercentText}>
               {totalPercent.toFixed(0)}% used
@@ -287,6 +360,94 @@ const BudgetScreen: React.FC<Props> = () => {
           )}
         </View>
       </ScrollView>
+
+      {/* Month/year picker modal */}
+      {showMonthPicker && (
+        <Modal
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowMonthPicker(false)}
+        >
+          <View style={styles.monthPickerOverlay}>
+            <View style={styles.monthPickerCard}>
+              <Text style={styles.monthPickerTitle}>Select month</Text>
+
+              {/* Years row */}
+              <View style={styles.yearRow}>
+                {getYearOptions(currentMonthDate.getFullYear()).map((year) => (
+                  <TouchableOpacity
+                    key={year}
+                    style={[
+                      styles.yearChip,
+                      year === currentMonthDate.getFullYear() &&
+                        styles.yearChipActive,
+                    ]}
+                    onPress={() => {
+                      const newDate = new Date(
+                        year,
+                        currentMonthDate.getMonth(),
+                        1
+                      );
+                      setCurrentMonthDate(newDate);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.yearChipText,
+                        year === currentMonthDate.getFullYear() &&
+                          styles.yearChipTextActive,
+                      ]}
+                    >
+                      {year}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Months grid */}
+              <View style={styles.monthGrid}>
+                {MONTH_NAMES.map((label, index) => (
+                  <TouchableOpacity
+                    key={label}
+                    style={[
+                      styles.monthChip,
+                      index === currentMonthDate.getMonth() &&
+                        styles.monthChipActive,
+                    ]}
+                    onPress={() => {
+                      const newDate = new Date(
+                        currentMonthDate.getFullYear(),
+                        index,
+                        1
+                      );
+                      setCurrentMonthDate(newDate);
+                      setShowMonthPicker(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.monthChipText,
+                        index === currentMonthDate.getMonth() &&
+                          styles.monthChipTextActive,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={styles.monthPickerClose}
+                onPress={() => setShowMonthPicker(false)}
+              >
+                <Text style={styles.monthPickerCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
     </SafeAreaView>
   );
 };
@@ -549,6 +710,127 @@ const styles = StyleSheet.create({
   actionButtonDanger: {
     backgroundColor: '#FEE2E2',
   },
+
+    monthLabelButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  monthSelectorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    gap: 12,
+  } as any,
+  monthArrow: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  monthArrowText: {
+    fontSize: 16,
+    color: colors.textPrimary,
+  },
+  monthLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+
+  monthPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  monthPickerCard: {
+    width: '100%',
+    borderRadius: 18,
+    backgroundColor: colors.surface,
+    padding: 16,
+  },
+  monthPickerTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  yearRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  yearChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginHorizontal: 4,
+    marginVertical: 4,
+  },
+  yearChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
+  },
+  yearChipText: {
+    fontSize: 12,
+    color: colors.textPrimary,
+  },
+  yearChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  monthChip: {
+    width: '30%',
+    paddingVertical: 8,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    backgroundColor: colors.background,
+  },
+  monthChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryDark,
+  },
+  monthChipText: {
+    fontSize: 13,
+    color: colors.textPrimary,
+  },
+  monthChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  monthPickerClose: {
+    marginTop: 10,
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+  },
+  monthPickerCloseText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+
+
   actionButtonText: { fontSize: 12, fontWeight: '500' },
 });
 

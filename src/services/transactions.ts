@@ -9,6 +9,18 @@ import {
   PaymentMethod,
 } from "../lib/types";
 
+import {
+  parseISO,
+  isWithinInterval,
+  isAfter,
+  addDays,
+  addWeeks,
+  addMonths,
+  startOfMonth,
+  endOfMonth,
+} from "date-fns";
+
+
 // ---- Input types for creating/updating transactions ----
 
 export interface CreateTransactionInput {
@@ -413,3 +425,158 @@ export async function deleteTransaction(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync("DELETE FROM transactions WHERE id = ?;", id);
 }
+
+const WEEKDAY_MAP: Record<string, number> = {
+  sun: 0,
+  mon: 1,
+  tue: 2,
+  wed: 3,
+  thu: 4,
+  fri: 5,
+  sat: 6,
+};
+
+function clampMonthDay(date: Date, targetDay: number): Date {
+  // Return a date in the same month as `date` with day = targetDay,
+  // clamped to the last valid day of that month if needed.
+  const monthStart = startOfMonth(date);
+  const monthEnd = endOfMonth(date);
+  const maxDay = monthEnd.getDate();
+  const day = Math.min(Math.max(targetDay, 1), maxDay);
+  const d = new Date(monthStart);
+  d.setDate(day);
+  return d;
+}
+
+/**
+ * Expand recurring transactions into concrete instances for a given date range.
+ *
+ * - Non-recurring transactions are included only if their original date is in [rangeStart, rangeEnd].
+ * - Recurring transactions are expanded according to recurringRule JSON:
+ *   {
+ *     frequency: "daily" | "weekly" | "monthly",
+ *     weekdays?: ["mon","wed",...],   // for weekly
+ *     monthDay?: number               // for monthly
+ *   }
+ * - Each occurrence gets a synthetic id: `${originalId}__${isoDate}`.
+ * - Expanded occurrences are returned with isRecurring = false so UI can treat them like normal instances.
+ */
+export function expandRecurringTransactionsForRange(
+  transactions: Transaction[],
+  rangeStart: Date,
+  rangeEnd: Date
+): Transaction[] {
+  const result: Transaction[] = [];
+
+  for (const tx of transactions) {
+    let txDate: Date;
+    try {
+      txDate = parseISO(tx.date);
+    } catch {
+      // Bad date → skip
+      continue;
+    }
+
+    // Non-recurring: just include if inside range
+    if (!tx.isRecurring || !tx.recurringRule) {
+      if (isWithinInterval(txDate, { start: rangeStart, end: rangeEnd })) {
+        result.push(tx);
+      }
+      continue;
+    }
+
+    // Parse rule JSON
+    let rule: any;
+    try {
+      rule = JSON.parse(tx.recurringRule);
+    } catch {
+      // Fallback: treat as one-off
+      if (isWithinInterval(txDate, { start: rangeStart, end: rangeEnd })) {
+        result.push(tx);
+      }
+      continue;
+    }
+
+    const frequency: string = rule.frequency || "monthly";
+
+    // If the first possible occurrence starts after the range, nothing to show
+    if (isAfter(txDate, rangeEnd)) {
+      continue;
+    }
+
+    if (frequency === "daily") {
+      // Every day from max(startDate, rangeStart) to rangeEnd
+      let cursor = txDate < rangeStart ? rangeStart : txDate;
+
+      while (!isAfter(cursor, rangeEnd)) {
+        result.push({
+          ...tx,
+          id: `${tx.id}__${cursor.toISOString()}`,
+          date: cursor.toISOString(),
+          isRecurring: true,
+        });
+        cursor = addDays(cursor, 1);
+      }
+    } else if (frequency === "weekly") {
+      // Weekly: optional weekdays array, otherwise same weekday as original
+      const originalWeekday = txDate.getDay();
+      const ruleWeekdays: string[] | undefined = rule.weekdays;
+      const weekdaySet = new Set<number>(
+        (ruleWeekdays && ruleWeekdays.length > 0
+          ? ruleWeekdays
+          : [Object.keys(WEEKDAY_MAP).find(
+              (k) => WEEKDAY_MAP[k] === originalWeekday
+            )]
+        )
+          .filter(Boolean)
+          .map((w) => WEEKDAY_MAP[w!.toLowerCase()] ?? originalWeekday)
+      );
+
+      // Iterate day-by-day within range (usually 1–2 months, so this is fine)
+      let cursor = rangeStart < txDate ? txDate : rangeStart;
+
+      while (!isAfter(cursor, rangeEnd)) {
+        if (cursor >= txDate && weekdaySet.has(cursor.getDay())) {
+          result.push({
+            ...tx,
+            id: `${tx.id}__${cursor.toISOString()}`,
+            date: cursor.toISOString(),
+            isRecurring: true,
+          });
+        }
+        cursor = addDays(cursor, 1);
+      }
+    } else {
+      // Monthly (default): either rule.monthDay or original transaction day
+      const baseDay = typeof rule.monthDay === "number"
+        ? rule.monthDay
+        : txDate.getDate();
+
+      // Start from the month that overlaps the max(rangeStart, txDate)
+      let cursor = new Date(txDate);
+
+      // Move cursor forward month-by-month until it's in/after the range
+      while (cursor < rangeStart) {
+        cursor = addMonths(cursor, 1);
+      }
+
+      while (!isAfter(cursor, rangeEnd)) {
+        const occurrence = clampMonthDay(cursor, baseDay);
+
+        if (!isAfter(occurrence, rangeEnd) && occurrence >= rangeStart && occurrence >= txDate) {
+          result.push({
+            ...tx,
+            id: `${tx.id}__${occurrence.toISOString()}`,
+            date: occurrence.toISOString(),
+            isRecurring: true,
+          });
+        }
+
+        cursor = addMonths(cursor, 1);
+      }
+    }
+  }
+
+  return result;
+}
+

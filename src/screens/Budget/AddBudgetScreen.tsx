@@ -27,6 +27,14 @@ import {
 type Props = NativeStackScreenProps<RootStackParamList, "AddBudget">;
 
 const ALERT_THRESHOLDS = [70, 80, 90, 100];
+const COLOR_CHOICES = [
+  '#F97316', '#EF4444', '#22C55E', '#0EA5E9', '#6366F1',
+  '#EC4899', '#EAB308', '#14B8A6', '#8B5CF6', '#F97373',
+  '#4ADE80', '#2DD4BF', '#38BDF8', '#A855F7', '#FACC15',
+  '#FB923C', '#F973A5', '#6B7280', '#94A3B8', '#22C1C3',
+  '#FF9A9E', '#FF6B6B', '#FFD93D', '#6EE7B7', '#3B82F6',
+];
+
 
 const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
   const [categories, setCategories] = useState<Category[]>([]);
@@ -34,10 +42,10 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
     null
   );
   const [customCategoryName, setCustomCategoryName] = useState("");
-
   const [limitAmount, setLimitAmount] = useState("");
   const [alertThreshold, setAlertThreshold] = useState<number>(80);
   const [isSaving, setIsSaving] = useState(false);
+  const [categoryColor, setCategoryColor] = useState<string>('#F97316');
 
   const currency: CurrencyCode = "INR";
 
@@ -90,7 +98,7 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
       }
 
       // Create category if not exists, or return existing
-      finalCategory = await ensureCategoryByName(trimmed);
+      finalCategory = await ensureCategoryByName(trimmed,categoryColor);
     } else {
       finalCategory =
         categories.find((c) => c.id === selectedCategoryId) ?? null;
@@ -187,20 +195,19 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
                 ]}
                 onPress={() => {
                   setSelectedCategoryId(cat.id);
-                  setCustomCategoryName("");
+                  setCustomCategoryName(""); // Clear custom category name when a predefined category is selected
                 }}
               >
                 <View
                   style={[
                     styles.chipColorDot,
-                    { backgroundColor: cat.colorHex ?? "#6B7280" },
+                    { backgroundColor: cat.colorHex ?? "#6B7280" }, // Default color if not set
                   ]}
                 />
                 <Text
                   style={[
                     styles.chipText,
-                    selectedCategoryId === cat.id &&
-                      styles.chipTextSelected,
+                    selectedCategoryId === cat.id && styles.chipTextSelected,
                   ]}
                 >
                   {cat.name}
@@ -219,15 +226,14 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
               <Text
                 style={[
                   styles.chipText,
-                  selectedCategoryId === "custom" &&
-                    styles.chipTextSelected,
+                  selectedCategoryId === "custom" && styles.chipTextSelected,
                 ]}
               >
                 + Custom
               </Text>
             </TouchableOpacity>
-          </View>
 
+          {/* Custom category name + color picker */}
           {selectedCategoryId === "custom" && (
             <View style={{ marginTop: 12 }}>
               <Text style={styles.sectionHint}>Type category name</Text>
@@ -240,8 +246,27 @@ const AddBudgetScreen: React.FC<Props> = ({ navigation }) => {
                   placeholderTextColor={colors.placeholder}
                 />
               </View>
+
+              <Text style={[styles.sectionHint, { marginTop: 12 }]}>
+                Pick a color for this category
+              </Text>
+              <View style={styles.colorChipsRow}>
+                {COLOR_CHOICES.map((c) => (
+                  <TouchableOpacity
+                    key={c}
+                    style={[
+                      styles.colorChip,
+                      { backgroundColor: c },
+                      categoryColor === c && styles.colorChipSelected,
+                    ]}
+                    onPress={() => setCategoryColor(c)}
+                    activeOpacity={0.8}
+                  />
+                ))}
+              </View>
             </View>
           )}
+        </View>
         </View>
 
         {/* Limit */}
@@ -483,6 +508,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveButtonText: { fontSize: 16, fontWeight: "600", color: "#FFFFFF" },
+  colorChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 8,
+    gap: 8,
+  } as any,
+  colorChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  colorChipSelected: {
+    borderWidth: 2,
+    borderColor: colors.primaryDark,
+  }
+
 });
 
 export default AddBudgetScreen;
