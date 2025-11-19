@@ -9,6 +9,11 @@ import {
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/RootNavigator";
 import colors from "../../lib/colors";
+import {
+  Shield,
+  Lock,
+  Sparkles
+} from "lucide-react-native";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Welcome">;
 
@@ -28,7 +33,7 @@ const WelcomeScreen: React.FC<Props> = ({ navigation }) => {
       {/* App icon */}
       <View style={styles.iconWrapper}>
         <View style={styles.iconBox}>
-          <Text style={styles.iconEmoji}>🛡️</Text>
+          <Shield size={42} color="#FFFFFF" strokeWidth={2.5} />
         </View>
       </View>
 
@@ -38,9 +43,9 @@ const WelcomeScreen: React.FC<Props> = ({ navigation }) => {
 
       {/* Feature bullets */}
       <View style={styles.featuresContainer}>
-        <FeatureRow title="End-to-end encrypted" />
-        <FeatureRow title="Local AI processing" />
-        <FeatureRow title="Smart insights & categorizations" />
+        <FeatureRow title="End-to-end encrypted" Icon={Lock} />
+        <FeatureRow title="Local AI processing" Icon={Shield} />
+        <FeatureRow title="Smart insights & categorizations" Icon={Sparkles} />
       </View>
 
       {/* Primary button */}
@@ -63,11 +68,11 @@ const WelcomeScreen: React.FC<Props> = ({ navigation }) => {
   );
 };
 
-const FeatureRow: React.FC<{ title: string }> = ({ title }) => {
+const FeatureRow: React.FC<{ title: string; Icon: React.ElementType }> = ({ title, Icon }) => {
   return (
     <View style={styles.featureRow}>
       <View style={styles.featureIconCircle}>
-        <Text style={styles.featureIconText}>•</Text>
+        <Icon size={18} color={colors.primary} strokeWidth={2} />
       </View>
       <Text style={styles.featureText}>{title}</Text>
     </View>
