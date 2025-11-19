@@ -14,10 +14,37 @@ import { RootStackParamList } from "../../navigation/RootNavigator";
 import colors from "../../lib/colors";
 import { useTransactionsStore } from "../../store/useTransactionsStore";
 import { startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
+import DonutChart, {
+  DonutChartDataPoint,
+} from "../../components/DonutChart";
+import {
+  Plus, 
+  Upload, 
+  Camera, 
+  MessageCircle, 
+  TrendingDown, 
+  TrendingUp,
+  Wallet,
+  PiggyBank,
+  ShoppingBag,
+  Coffee,
+  Car,
+  Home,
+  Bell
+} from "lucide-react-native";
 
 type Props = BottomTabScreenProps<AppTabParamList, "Home"> & {
   navigation: NativeStackNavigationProp<RootStackParamList>;
 };
+
+const SEGMENT_COLORS = [
+  "#F97316", // orange
+  "#4F46E5", // indigo
+  "#EC4899", // pink
+  "#22C55E", // green
+  "#0EA5E9", // sky
+  "#A855F7", // purple
+];
 
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const handleImportPress = () => navigation.navigate("ImportTransactions");
@@ -45,12 +72,23 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
       (categorySpend[tx.categoryId] ?? 0) + tx.amount;
   }
 
-  // donut dataset for charts
+  // base donut dataset (categoryId + value)
   const donutData = Object.keys(categorySpend).map((categoryId) => ({
     categoryId,
     value: categorySpend[categoryId],
   }));
 
+  // attach colors to each segment
+  const chartSegments = donutData.map((item, index) => ({
+    ...item,
+    color: SEGMENT_COLORS[index % SEGMENT_COLORS.length],
+  }));
+
+  // transform for DonutChart component (only needs value + color)
+  const donutChartData: DonutChartDataPoint[] = chartSegments.map((s) => ({
+    value: s.value,
+    color: s.color,
+  }));
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -90,7 +128,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                 <Text style={styles.summaryRateLabel}>Savings rate</Text>
               </View>
             </View>
-            
 
             {/* Progress bar */}
             <View style={styles.progressBackground}>
@@ -102,20 +139,23 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         {/* Quick actions */}
         <View style={styles.quickActionsSection}>
           <View style={styles.quickActionsRow}>
-            <QuickActionButton label="Add" icon="＋" onPress={handleAddPress} />
+            <QuickActionButton 
+              label="Add" 
+              Icon={Plus} 
+              onPress={handleAddPress} />
             <QuickActionButton
               label="Import"
-              icon="⬆️"
+              Icon={Upload}
               onPress={handleImportPress}
             />
             <QuickActionButton
               label="Scan"
-              icon="📷"
+              Icon={Camera}
               onPress={handleScanPress}
             />
             <QuickActionButton
               label="Chat AI"
-              icon="💬"
+              Icon={MessageCircle}
               onPress={handleChatPress}
             />
           </View>
@@ -126,20 +166,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           <Text style={styles.sectionTitle}>Category Spending</Text>
 
           <View style={styles.card}>
-            <View style={styles.donutPlaceholder}>
-              <Text style={styles.donutText}>Donut Chart</Text>
-            </View>
-            {donutData.length === 0 ? (
-              <Text style={styles.donutText}>No expenses this month</Text>
+            {chartSegments.length === 0 ? (
+              <View style={styles.donutPlaceholder}>
+                <Text style={styles.donutText}>No expenses this month</Text>
+              </View>
             ) : (
-              donutData.map((item) => (
-                <LegendItem
-                  key={item.categoryId}
-                  color="#4F46E5"
-                  label={item.categoryId}
-                  value={`${item.value.toLocaleString()}`}
-                />
-              ))
+              <>
+                <View style={styles.donutWrapper}>
+                  <DonutChart data={donutChartData} size={180} strokeWidth={28} />
+                </View>
+
+                <View style={styles.legendContainer}>
+                  {chartSegments.map((item) => (
+                    <LegendItem
+                      key={item.categoryId}
+                      color={item.color}
+                      label={item.categoryId}
+                      value={item.value.toLocaleString()}
+                    />
+                  ))}
+                </View>
+              </>
             )}
           </View>
         </View>
@@ -150,19 +197,19 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
 type QuickActionProps = {
   label: string;
-  icon: string;
+  Icon: React.ComponentType<{ size?: number; color?: string }>;
   onPress: () => void;
 };
 
 const QuickActionButton: React.FC<QuickActionProps> = ({
   label,
-  icon,
+  Icon,
   onPress,
 }) => {
   return (
     <TouchableOpacity style={styles.quickAction} onPress={onPress}>
       <View style={styles.quickIconCircle}>
-        <Text style={styles.quickIcon}>{icon}</Text>
+        <Icon size={22} color={colors.primary} />
       </View>
       <Text style={styles.quickLabel}>{label}</Text>
     </TouchableOpacity>
@@ -195,7 +242,7 @@ const styles = StyleSheet.create({
   },
   mainAmount: {
     fontSize: 28,
-    fontWeight: '700',
+    fontWeight: "700",
     color: colors.textPrimary,
   },
   contentContainer: {
@@ -336,6 +383,11 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
+  },
+  donutWrapper: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
   },
   donutPlaceholder: {
     height: 180,
