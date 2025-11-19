@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -17,6 +17,15 @@ import { startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
 import DonutChart, {
   DonutChartDataPoint,
 } from "../../components/DonutChart";
+import { Category } from "../../lib/types";
+import { listCategories } from "../../services/categories";
+
+
+import { useIsFocused } from "@react-navigation/native";
+import { expandRecurringTransactionsForRange } from "../../services/transactions";
+import { listBudgets } from "../../services/budgets";
+import { Budget } from "../../lib/types";
+
 import {
   Plus, 
   Upload, 
@@ -46,49 +55,117 @@ const SEGMENT_COLORS = [
   "#A855F7", // purple
 ];
 
+
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const handleImportPress = () => navigation.navigate("ImportTransactions");
   const handleScanPress = () => {}; // leave empty for now
   const handleChatPress = () => navigation.navigate("Chatbot");
   const handleNotificationsPress = () => navigation.navigate("Alerts");
   const handleAddPress = () => navigation.navigate("Add");
+
   const transactions = useTransactionsStore((s) => s.transactions);
+  const isFocused = useIsFocused();
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [loadingBudgets, setLoadingBudgets] = useState(false);
+
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, Category>();
+    categories.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [categories]);
+
   const now = new Date();
   const monthStart = startOfMonth(now);
   const monthEnd = endOfMonth(now);
 
-  // filter to this month
-  const monthlyTxns = transactions.filter((t) =>
-    isWithinInterval(parseISO(t.date), { start: monthStart, end: monthEnd })
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoadingBudgets(true);
+        const [budgetRows, categoryRows] = await Promise.all([
+          listBudgets({ activeOnly: true }),
+          listCategories(),
+        ]);
+
+        setBudgets(budgetRows);
+        setCategories(categoryRows);
+      } catch (e) {
+        console.error("Failed to load budgets/categories on Home", e);
+      } finally {
+        setLoadingBudgets(false);
+      }
+    };
+
+    if (isFocused) {
+      load();
+    }
+  }, [isFocused]);
+
+
+  // Expand recurring transactions for this month (same behaviour as BudgetScreen)
+  const expandedMonthlyTransactions = useMemo(
+    () =>
+      expandRecurringTransactionsForRange(transactions, monthStart, monthEnd),
+    [transactions, monthStart, monthEnd]
   );
 
-  // total monthly spent
-  const totalSpent = monthlyTxns.reduce((sum, t) => sum + t.amount, 0);
-  const categorySpend: Record<string, number> = {};
+  const monthlyExpenses = useMemo(
+    () =>
+      expandedMonthlyTransactions.filter((tx) => tx.type === "expense"),
+    [expandedMonthlyTransactions]
+  );
 
-  for (const tx of monthlyTxns) {
+  const totalSpent = useMemo(
+    () => monthlyExpenses.reduce((sum, t) => sum + t.amount, 0),
+    [monthlyExpenses]
+  );
+
+  const totalBudget = useMemo(
+    () => budgets.reduce((sum, b) => sum + b.limitAmount, 0),
+    [budgets]
+  );
+
+  const budgetUsagePercent = useMemo(() => {
+    if (totalBudget <= 0) return 0;
+    return Math.min(100, (totalSpent / totalBudget) * 100);
+  }, [totalBudget, totalSpent]);
+
+  const categorySpend: Record<string, number> = {};
+  for (const tx of monthlyExpenses) {
     if (!tx.categoryId) continue;
     categorySpend[tx.categoryId] =
       (categorySpend[tx.categoryId] ?? 0) + tx.amount;
   }
 
-  // base donut dataset (categoryId + value)
-  const donutData = Object.keys(categorySpend).map((categoryId) => ({
-    categoryId,
-    value: categorySpend[categoryId],
-  }));
+  type ChartSegment = {
+    categoryId: string;
+    label: string;
+    value: number;
+    color: string;
+  };
 
-  // attach colors to each segment
-  const chartSegments = donutData.map((item, index) => ({
-    ...item,
-    color: SEGMENT_COLORS[index % SEGMENT_COLORS.length],
-  }));
+  const chartSegments: ChartSegment[] = Object.keys(categorySpend).map(
+    (categoryId, index) => {
+      const cat = categoryMap.get(categoryId);
+      const label = cat?.name ?? categoryId;
+      const color =
+        cat?.colorHex ?? SEGMENT_COLORS[index % SEGMENT_COLORS.length];
 
-  // transform for DonutChart component (only needs value + color)
+      return {
+        categoryId,
+        label,
+        value: categorySpend[categoryId],
+        color,
+      };
+    }
+  );
+
   const donutChartData: DonutChartDataPoint[] = chartSegments.map((s) => ({
     value: s.value,
     color: s.color,
   }));
+
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -117,21 +194,36 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           <View style={styles.summaryCard}>
             <View style={styles.summaryRow}>
               <View>
-                <Text style={styles.summaryLabel}>This Month</Text>
+                <Text style={styles.summaryLabel}>This month spent</Text>
                 <Text style={styles.mainAmount}>
                   ₹{totalSpent.toLocaleString()}
                 </Text>
+                {totalBudget > 0 && (
+                  <Text style={styles.summarySubtext}>
+                    {budgetUsagePercent.toFixed(0)}% of your budget used
+                  </Text>
+                )}
               </View>
 
               <View style={styles.summaryRight}>
-                <Text style={styles.summaryRate}>20%</Text>
-                <Text style={styles.summaryRateLabel}>Savings rate</Text>
+                <Text style={styles.summaryRate}>
+                  {totalBudget > 0
+                    ? `${budgetUsagePercent.toFixed(0)}%`
+                    : "--"}
+                </Text>
+                <Text style={styles.summaryRateLabel}>of budget used</Text>
               </View>
             </View>
 
-            {/* Progress bar */}
+
+            {/* Progress bar: % of budget used */}
             <View style={styles.progressBackground}>
-              <View style={styles.progressFill} />
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${budgetUsagePercent}%` },
+                ]}
+              />
             </View>
           </View>
         </View>
@@ -181,7 +273,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
                     <LegendItem
                       key={item.categoryId}
                       color={item.color}
-                      label={item.categoryId}
+                      label={item.label}
                       value={item.value.toLocaleString()}
                     />
                   ))}
