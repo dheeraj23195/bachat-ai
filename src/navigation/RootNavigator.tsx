@@ -12,7 +12,7 @@ import ImportTransactionsScreen from "../screens/Import/ImportTransactionsScreen
 import ProfileScreen from "../screens/Profile/ProfileScreen";
 import ChatbotScreen from "../screens/Chatbot/ChatbotScreen";
 import AddBudgetScreen from "../screens/Budget/AddBudgetScreen";
-import EditBudgetScreen from '../screens/Budget/EditBudgetScreen';
+import EditBudgetCategoryScreen from '../screens/Budget/EditBudgetCategoryScreen';
 import TransactionsListScreen from '../screens/Transactions/TransactionsListScreen';
 
 export type RootStackParamList = {
@@ -30,12 +30,14 @@ export type RootStackParamList = {
   Chatbot: undefined;
   AddBudget: undefined;
   TransactionsList: {
-    categoryId?: string | null;
-    title?: string;
+    categoryId: string | null;
+    title: string;
+    startDate?: string; // ISO string
+    endDate?: string;   // ISO string
   };
-  EditBudget: {
-    budgetId: string;
-  };
+
+  EditBudgetCategory: { budgetId: string };
+
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -71,9 +73,9 @@ const RootNavigator: React.FC = () => {
         options={{ headerShown: false }}
       />
       <Stack.Screen
-        name="EditBudget"
-        component={EditBudgetScreen}
-        options={{ headerShown: false }}
+        name="EditBudgetCategory"
+        component={EditBudgetCategoryScreen}
+        options={{ title: "Edit Budget" }}
       />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Chatbot" component={ChatbotScreen} />

@@ -96,7 +96,7 @@ export async function createCategory(input: {
   let id: string;
   if (input.id) {
     id = input.id;
-    } else {
+  } else {
     const slug = slugifyName(nameTrimmed);
     id = slug.length > 0 ? slug : generateCategoryId();
   }
@@ -169,19 +169,29 @@ export async function findCategoryByName(
 /**
  * Ensure there is a category for this name.
  * If one exists (case-insensitive), returns it.
- * Otherwise creates a new custom category.
+ * Otherwise creates a new custom category with the provided color.
  */
 export async function ensureCategoryByName(
-  name: string
+  name: string,
+  colorHex: string
 ): Promise<Category> {
   const existing = await findCategoryByName(name);
-  if (existing) return existing;
+  if (existing) {
+    // If it exists but has no color yet, optionally update it with the new color
+    if (!existing.colorHex && colorHex) {
+      await updateCategory(existing.id, { colorHex });
+      return { ...existing, colorHex };
+    }
+    return existing;
+  }
 
-  // New custom category with auto id + default color/icon
+  const finalColor = colorHex || '#6B7280';
+
+  // New custom category with auto id + chosen color
   return createCategory({
     name,
     isDefault: false,
-    colorHex: '#6B7280',
+    colorHex: finalColor,
     icon: null,
   });
 }
