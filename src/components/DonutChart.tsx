@@ -11,12 +11,15 @@ type DonutChartProps = {
   data: DonutChartDataPoint[];
   size?: number;
   strokeWidth?: number;
+  /** Called when a segment is pressed/held */
+  onSegmentPress?: (index: number) => void;
 };
 
 const DonutChart: React.FC<DonutChartProps> = ({
   data,
   size = 180,
   strokeWidth = 28,
+  onSegmentPress,
 }) => {
   if (!data || data.length === 0) {
     return null;
@@ -57,6 +60,12 @@ const DonutChart: React.FC<DonutChartProps> = ({
                 strokeDashoffset={-cumulativeOffset}
                 strokeLinecap="round"
                 fill="transparent"
+                // Fires on tap / press & hold
+                onPressIn={
+                  onSegmentPress
+                    ? () => onSegmentPress(index)
+                    : undefined
+                }
               />
             );
 
