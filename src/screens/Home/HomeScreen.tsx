@@ -68,6 +68,8 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [loadingBudgets, setLoadingBudgets] = useState(false);
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState<number | null>(null);
+
 
   const categoryMap = useMemo(() => {
     const map = new Map<string, Category>();
@@ -161,6 +163,21 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }
   );
 
+  
+  useEffect(() => {
+    if (chartSegments.length === 0) {
+      // no data → hide pill
+      setActiveSegmentIndex(null);
+    } else if (
+      activeSegmentIndex !== null &&
+      activeSegmentIndex >= chartSegments.length
+    ) {
+      // current index out of range after data update → hide pill
+      setActiveSegmentIndex(null);
+    }
+  }, [chartSegments.length, activeSegmentIndex]);
+
+
   const donutChartData: DonutChartDataPoint[] = chartSegments.map((s) => ({
     value: s.value,
     color: s.color,
@@ -186,7 +203,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
               style={styles.bellButton}
               onPress={handleNotificationsPress}
             >
-              <Text style={styles.bellIcon}>🔔</Text>
+              <Bell size={20} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
@@ -264,8 +281,34 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
               </View>
             ) : (
               <>
-                <View style={styles.donutWrapper}>
-                  <DonutChart data={donutChartData} size={180} strokeWidth={28} />
+                <View style={styles.donutRow}>
+                  <View style={styles.donutWrapper}>
+                    <DonutChart
+                      data={donutChartData}
+                      size={180}
+                      strokeWidth={28}
+                      onSegmentPress={(index) => setActiveSegmentIndex(index)}
+                    />
+                  </View>
+
+                  {activeSegmentIndex !== null &&
+                    chartSegments[activeSegmentIndex] && (
+                      <View style={styles.activeLabelPill}>
+                        <View
+                          style={[
+                            styles.legendDot,
+                            {
+                              backgroundColor:
+                                chartSegments[activeSegmentIndex].color,
+                              marginRight: 6,
+                            },
+                          ]}
+                        />
+                        <Text style={styles.activeLabelText}>
+                          {chartSegments[activeSegmentIndex].label}
+                        </Text>
+                      </View>
+                    )}
                 </View>
 
                 <View style={styles.legendContainer}>
@@ -516,6 +559,26 @@ const styles = StyleSheet.create({
   legendValue: {
     fontSize: 13,
     color: colors.textSecondary,
+  },
+  donutRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+  },
+  activeLabelPill: {
+    marginLeft: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F9FAFB",
+  },
+  activeLabelText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: colors.textPrimary,
   },
 });
 
