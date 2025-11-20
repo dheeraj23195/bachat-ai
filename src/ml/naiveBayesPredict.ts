@@ -20,10 +20,9 @@ type TotalsRow = {
   doc_count: number;
 };
 
-// Fetch word counts for a list of tokens (batch)
+// Fetch word counts for a list of tokens
 async function getWordCountsForTokens(words: string[]): Promise<WordFreqRow[]> {
   if (!words.length) return [];
-  // Build SQL safe IN list
   const inList = words.map((w) => `'${w.replace(/'/g, "''")}'`).join(", ");
   return queryAsync<WordFreqRow>(
     `SELECT word, category_id, count FROM word_frequency WHERE word IN (${inList});`
@@ -37,7 +36,7 @@ async function getCategoryTotals(): Promise<TotalsRow[]> {
   `);
 }
 
-// Naive Bayes prediction function (optimized)
+// Improved Naive Bayes prediction
 export async function predictNaiveBayes(text: string): Promise<NBResult> {
   if (!text || text.trim().length === 0) {
     return { label: null, score: 0, why: [] };
@@ -48,10 +47,8 @@ export async function predictNaiveBayes(text: string): Promise<NBResult> {
     return { label: null, score: 0, why: [] };
   }
 
-  // Unique tokens only (NB uses repetition via counts in the formula, but we query counts only once)
   const uniqueTokens = Array.from(new Set(tokens));
 
-  // Fetch category totals & vocab size
   const totals = await getCategoryTotals();
   const vocabSize = (await getVocabSize()) || 1;
 
@@ -60,68 +57,77 @@ export async function predictNaiveBayes(text: string): Promise<NBResult> {
     return { label: null, score: 0, why: ["Model has no training data"] };
   }
 
-  // Fetch all relevant word counts in one go
   const rows = await getWordCountsForTokens(uniqueTokens);
-  // Map by word -> array of rows
+
+  // Map word -> rows
   const wordMap: Record<string, WordFreqRow[]> = {};
   for (const r of rows) {
     if (!wordMap[r.word]) wordMap[r.word] = [];
     wordMap[r.word].push(r);
   }
 
+  // ✅ FILTER: keep only tokens that exist in at least one category
+  const validTokens = uniqueTokens.filter((token) => {
+    return wordMap[token] && wordMap[token].length > 0;
+  });
+
+  // ✅ If no meaningful tokens exist, do NOT guess
+  if (validTokens.length === 0) {
+    return {
+      label: null,
+      score: 0,
+      why: ["All tokens are unseen by the model"]
+    };
+  }
+
   const categoryScores: Record<string, number> = {};
   const reasons: Record<string, string[]> = {};
 
-  // Initialize log probabilities (priors)
   for (const cat of totals) {
     const prior = Math.log((cat.doc_count || 1) / totalDocs);
     categoryScores[cat.category_id] = prior;
     reasons[cat.category_id] = [
-      `Prior: ${((cat.doc_count || 1) / totalDocs).toFixed(3)}`
+      `Prior ${(cat.doc_count || 1)}/${totalDocs}`
     ];
   }
 
-  // For repeated tokens in the text, we need to account for frequency;
-  // So compute token frequencies from original tokens
-  const tokenFreq: Record<string, number> = {};
-  for (const t of tokens) tokenFreq[t] = (tokenFreq[t] || 0) + 1;
-
-  // Evaluate each unique token but multiply logProb by its frequency
-  for (const token of uniqueTokens) {
-    const rowsForToken = wordMap[token] || [];
+  for (const token of validTokens) {
+    const rowsForToken = wordMap[token];
 
     for (const cat of totals) {
       const categoryId = cat.category_id;
       const match = rowsForToken.find((r) => r.category_id === categoryId);
       const count = match ? match.count : 0;
 
-      const prob = (count + 1) / (cat.total_words + vocabSize); // Laplace smoothing
+      const prob = (count + 1) / (cat.total_words + vocabSize);
       const logProb = Math.log(prob);
 
-      // Multiply by token frequency in the input
-      categoryScores[categoryId] += logProb * (tokenFreq[token] || 1);
+      categoryScores[categoryId] += logProb;
 
       if (match) {
         reasons[categoryId].push(
-          `Token "${token}" found ${count}× in ${categoryId} (log ${logProb.toFixed(4)})`
-        );
-      } else {
-        reasons[categoryId].push(
-          `Token "${token}" unseen in ${categoryId} (log ${logProb.toFixed(4)})`
+          `Token "${token}" found ${count}× in ${categoryId}`
         );
       }
     }
   }
 
-  // Choose best scoring category
   const sorted = Object.entries(categoryScores).sort((a, b) => b[1] - a[1]);
   const [bestCategory, bestLogScore] = sorted[0];
 
-  // Convert log-probability to normalized probability
   const maxLog = bestLogScore;
-  const probs = sorted.map(([cat, log]) => Math.exp(log - maxLog));
+  const probs = sorted.map(([_, log]) => Math.exp(log - maxLog));
   const sumProbs = probs.reduce((a, b) => a + b, 0);
   const bestProbability = probs[0] / sumProbs;
+
+  // ✅ FINAL SAFETY: must have minimum signal
+  if (bestProbability < 0.55) {
+    return {
+      label: null,
+      score: bestProbability,
+      why: ["Prediction too weak / dominated by prior"]
+    };
+  }
 
   return {
     label: bestCategory,
@@ -129,4 +135,3 @@ export async function predictNaiveBayes(text: string): Promise<NBResult> {
     why: reasons[bestCategory]
   };
 }
-
