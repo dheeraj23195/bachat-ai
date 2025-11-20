@@ -202,21 +202,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }
   );
 
-  
-  useEffect(() => {
-    if (chartSegments.length === 0) {
-      // no data → hide pill
-      setActiveSegmentIndex(null);
-    } else if (
-      activeSegmentIndex !== null &&
-      activeSegmentIndex >= chartSegments.length
-    ) {
-      // current index out of range after data update → hide pill
-      setActiveSegmentIndex(null);
-    }
-  }, [chartSegments.length, activeSegmentIndex]);
-
-
   const donutChartData: DonutChartDataPoint[] = chartSegments.map((s) => ({
     value: s.value,
     color: s.color,
@@ -324,36 +309,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
               </View>
             ) : (
               <>
-                <View style={styles.donutRow}>
-                  <View style={styles.donutWrapper}>
-                    <DonutChart
-                      data={donutChartData}
-                      size={180}
-                      strokeWidth={28}
-                      onSegmentPress={(index) => setActiveSegmentIndex(index)}
-                    />
-                  </View>
-
-                  {activeSegmentIndex !== null &&
-                    chartSegments[activeSegmentIndex] && (
-                      <View style={styles.activeLabelPill}>
-                        <View
-                          style={[
-                            styles.legendDot,
-                            {
-                              backgroundColor:
-                                chartSegments[activeSegmentIndex].color,
-                              marginRight: 6,
-                            },
-                          ]}
-                        />
-                        <Text style={styles.activeLabelText}>
-                          {chartSegments[activeSegmentIndex].label}
-                        </Text>
-                      </View>
-                    )}
-                </View>
-
                 <View style={styles.legendContainer}>
                   {chartSegments.map((item) => (
                     <LegendItem
