@@ -129,6 +129,13 @@ export interface AICategoryTrainingExample {
   createdAt: string;
 }
 
+export interface CategoryUsage {
+  transactionCount: number;
+  budgetCount: number;
+}
+
+
+
 // --- Helper filter types for services ---
 
 export interface TransactionFilter {
@@ -140,3 +147,26 @@ export interface TransactionFilter {
   maxAmount?: number;
   source?: Array<Transaction["source"]>;
 }
+
+
+// --- Backup / sync payload type ---
+
+export interface BackupPayload {
+  version: 1; // backup format version for future migrations
+  exportedAt: string; // ISO timestamp
+
+  categories: Category[];
+  budgets: Budget[];
+  transactions: Transaction[];
+}
+
+// --- Encrypted backup envelope ---
+// This is what we will actually store in Supabase (as JSON string).
+export interface EncryptedBackupEnvelope {
+  version: 1;
+  // base64-encoded values
+  cipherText: string;
+  iv: string;
+  salt: string;
+}
+

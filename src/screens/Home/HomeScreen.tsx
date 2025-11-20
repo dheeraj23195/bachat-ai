@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { Alert } from "react-native";
 import {
   View,
   Text,
@@ -9,8 +10,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { AppTabParamList } from "../../navigation/AppTabs";
-import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { RootStackParamList } from "../../navigation/RootNavigator";
+
 import colors from "../../lib/colors";
 import { useTransactionsStore } from "../../store/useTransactionsStore";
 import { startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
@@ -19,12 +19,15 @@ import DonutChart, {
 } from "../../components/DonutChart";
 import { Category } from "../../lib/types";
 import { listCategories } from "../../services/categories";
-
-
 import { useIsFocused } from "@react-navigation/native";
 import { expandRecurringTransactionsForRange } from "../../services/transactions";
 import { listBudgets } from "../../services/budgets";
 import { Budget } from "../../lib/types";
+import { getCurrentUser } from "../../services/supabaseClient";
+import { uploadEncryptedBackup } from "../../services/cloudSync";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { RootStackParamList } from "../../navigation/RootNavigator";
+
 
 import {
   Plus, 
@@ -68,6 +71,8 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [loadingBudgets, setLoadingBudgets] = useState(false);
+  const [userName, setUserName] = useState<string>("Bachat user");
+  const [syncing, setSyncing] = useState(false);
 
   const categoryMap = useMemo(() => {
     const map = new Map<string, Category>();
@@ -102,6 +107,24 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     }
   }, [isFocused]);
 
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const user = await getCurrentUser();
+        if (user) {
+          const metaName =
+            (user.user_metadata as any)?.full_name as string | undefined;
+          setUserName(metaName || user.email || "Bachat user");
+        }
+      } catch (e) {
+        console.warn("[Home] Failed to load Supabase user", e);
+      }
+    };
+
+    loadUser();
+  }, []);
+
+
 
   // Expand recurring transactions for this month (same behaviour as BudgetScreen)
   const expandedMonthlyTransactions = useMemo(
@@ -120,6 +143,24 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     () => monthlyExpenses.reduce((sum, t) => sum + t.amount, 0),
     [monthlyExpenses]
   );
+
+  const handleManualSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+
+    try {
+      await uploadEncryptedBackup();
+      Alert.alert("Synced", "Your data has been securely backed up to the cloud.");
+    } catch (err: any) {
+      console.error("[Settings] Manual sync failed", err);
+      Alert.alert(
+        "Sync failed",
+        err?.message ?? "Unable to sync right now. Please try again later."
+      );
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const totalBudget = useMemo(
     () => budgets.reduce((sum, b) => sum + b.limitAmount, 0),
@@ -179,14 +220,18 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
           <View style={styles.headerTopRow}>
             <View>
               <Text style={styles.greetingText}>Good Morning</Text>
-              <Text style={styles.userName}>Adarsh Bhatt</Text>
+              <Text style={styles.userName}>{userName}</Text>
             </View>
 
+            {/* Manual Sync Now button */}
             <TouchableOpacity
-              style={styles.bellButton}
-              onPress={handleNotificationsPress}
+              activeOpacity={0.8}
+              onPress={handleManualSync}
+              disabled={syncing}
             >
-              <Text style={styles.bellIcon}>🔔</Text>
+              <Text style={styles.syncButtonText}>
+                {syncing ? "Syncing…" : "Sync Now"}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -286,6 +331,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     </SafeAreaView>
   );
 };
+
 
 type QuickActionProps = {
   label: string;
@@ -439,6 +485,21 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
   },
+  syncButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: "white",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(0, 0, 0, 0.7)",
+    alignSelf: "flex-start",
+  },
+  syncButtonText: {
+    color: "#ffffffff", // same blue as your card or adjust
+    fontSize: 14,
+    fontWeight: "600",
+  },
+
   quickIconCircle: {
     width: 56,
     height: 56,

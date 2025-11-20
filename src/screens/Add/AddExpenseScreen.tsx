@@ -1,4 +1,4 @@
-// src/screens/Add/AddScreen.tsx
+// src/screens/Add/AddExpenseScreen.tsx
 
 import React, {
   useEffect,
@@ -22,7 +22,6 @@ import DateTimePicker, {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { useNavigation } from "@react-navigation/native";
-import { format, parseISO } from "date-fns";
 import { useIsFocused } from '@react-navigation/native';
 
 import { AppTabParamList } from "../../navigation/AppTabs";
@@ -32,9 +31,84 @@ import {
   CurrencyCode,
   PaymentMethod,
   Category,
+  Transaction,
 } from "../../lib/types";
 import { useTransactionsStore } from "../../store/useTransactionsStore";
 import { listCategories } from "../../services/categories";
+
+import { listBudgets } from "../../services/budgets";
+import { expandRecurringTransactionsForRange } from "../../services/transactions";
+import { format, startOfMonth, endOfMonth, parseISO, isWithinInterval } from "date-fns";
+import { sendBudgetAlertNotification } from "../../services/notifications";
+
+// After imports, before AddExpenseScreen component
+
+async function checkBudgetAlertsForNewExpense(saved: Transaction) {
+  try {
+    // Get the latest transactions from the store
+    const allTx = useTransactionsStore.getState().transactions;
+
+    // Use the month of the expense's date
+    const expenseDate = parseISO(saved.date);
+    const monthStart = startOfMonth(expenseDate);
+    const monthEnd = endOfMonth(expenseDate);
+
+    // Expand recurring transactions for this month
+    const expanded = expandRecurringTransactionsForRange(
+      allTx,
+      monthStart,
+      monthEnd
+    ).filter((tx) => {
+      if (tx.type !== "expense") return false;
+      try {
+        const d = parseISO(tx.date);
+        return isWithinInterval(d, { start: monthStart, end: monthEnd });
+      } catch {
+        return false;
+      }
+    });
+
+    // Fetch active budgets
+    const budgets = await listBudgets({ activeOnly: true });
+
+    // Check category-specific + overall (categoryId === null) budgets
+    const relevantBudgets = budgets.filter(
+      (b) => b.categoryId === saved.categoryId || b.categoryId === null
+    );
+
+    for (const b of relevantBudgets) {
+      const spentForThisBudget = expanded
+        .filter((tx) =>
+          b.categoryId === null ? true : tx.categoryId === b.categoryId
+        )
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+      if (spentForThisBudget <= 0 || b.limitAmount <= 0) continue;
+
+      const usagePercent = (spentForThisBudget / b.limitAmount) * 100;
+
+      if (usagePercent >= b.alertThresholdPercent) {
+        const scopeLabel =
+          b.categoryId === null ? "overall" : "category";
+
+        const title = "Budget alert";
+        const body = `Your ${scopeLabel} budget is at ${usagePercent.toFixed(
+          0
+        )}% of the limit.`;
+
+        // Local notification (OS-level)
+        await sendBudgetAlertNotification(title, body);
+
+        // If you only want one notification per expense, you can break here.
+        // break;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to compute/send budget alert", e);
+  }
+}
+
+
 
 type Props = BottomTabScreenProps<AppTabParamList, "Add">;
 
@@ -72,6 +146,9 @@ const AddExpenseScreen: React.FC<Props> = () => {
   const addLocalTransaction = useTransactionsStore(
     (s) => s.addLocalTransaction
   );
+
+  const transactions = useTransactionsStore((s) => s.transactions);
+  const loadTransactions = useTransactionsStore((s) => s.loadTransactions);
 
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -216,8 +293,13 @@ const AddExpenseScreen: React.FC<Props> = () => {
         source: "manual",
       });
 
+      // Update in-memory store
       addLocalTransaction(saved);
 
+      // 🔔 Check budgets and send local notifications if thresholds are crossed
+      await checkBudgetAlertsForNewExpense(saved);
+
+      // Success popup
       Alert.alert("Expense saved", "Your expense has been added.", [
         { text: "OK" },
       ]);

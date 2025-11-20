@@ -2,16 +2,15 @@
 
 import { getDb } from "./db";
 import { Budget, BudgetPeriod, CurrencyCode } from "../lib/types";
-
-// ---------- Input types ----------
+import { queueCloudUpload } from "./cloudSync"; // ← ADDED
 
 export interface CreateBudgetInput {
-  categoryId?: string | null; // null = overall budget
-  period: BudgetPeriod; // 'monthly' | 'weekly' | 'custom'
-  periodStartDay?: number | null; // e.g. 1 for "1st of month"
+  categoryId?: string | null;
+  period: BudgetPeriod;
+  periodStartDay?: number | null;
   limitAmount: number;
   currency: CurrencyCode;
-  alertThresholdPercent: number; // e.g. 80 for 80%
+  alertThresholdPercent: number;
   isActive?: boolean;
 }
 
@@ -26,7 +25,7 @@ export interface UpdateBudgetInput {
 }
 
 export interface BudgetFilter {
-  categoryIds?: Array<string | null>; // include null to fetch overall budget
+  categoryIds?: Array<string | null>;
   periods?: BudgetPeriod[];
   activeOnly?: boolean;
 }
@@ -54,9 +53,6 @@ function mapRowToBudget(row: any): Budget {
 
 // ---------- Public API ----------
 
-/**
- * Create and persist a new budget row.
- */
 export async function createBudget(input: CreateBudgetInput): Promise<Budget> {
   const db = await getDb();
   const id = generateBudgetId();
@@ -94,6 +90,8 @@ export async function createBudget(input: CreateBudgetInput): Promise<Budget> {
     now
   );
 
+  await queueCloudUpload(); // ← ADDED
+
   return {
     id,
     categoryId,
@@ -108,9 +106,6 @@ export async function createBudget(input: CreateBudgetInput): Promise<Budget> {
   };
 }
 
-/**
- * Fetch a single budget by id.
- */
 export async function getBudgetById(id: string): Promise<Budget | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<any>(
@@ -122,9 +117,6 @@ export async function getBudgetById(id: string): Promise<Budget | null> {
   return mapRowToBudget(row);
 }
 
-/**
- * List budgets with optional filters (category, period, activeOnly).
- */
 export async function listBudgets(
   filter: BudgetFilter = {}
 ): Promise<Budget[]> {
@@ -177,9 +169,6 @@ export async function listBudgets(
   return rows.map(mapRowToBudget);
 }
 
-/**
- * Partially update a budget.
- */
 export async function updateBudget(
   id: string,
   updates: UpdateBudgetInput
@@ -202,7 +191,9 @@ export async function updateBudget(
   if (updates.periodStartDay !== undefined) {
     fields.push("period_start_day = ?");
     params.push(
-      typeof updates.periodStartDay === "number" ? updates.periodStartDay : null
+      typeof updates.periodStartDay === "number"
+        ? updates.periodStartDay
+        : null
     );
   }
 
@@ -230,10 +221,6 @@ export async function updateBudget(
   fields.push("updated_at = ?");
   params.push(now);
 
-  if (fields.length === 0) {
-    return;
-  }
-
   params.push(id);
 
   await db.runAsync(
@@ -244,12 +231,12 @@ export async function updateBudget(
     `,
     params
   );
+
+  await queueCloudUpload(); // ← ADDED
 }
 
-/**
- * Delete a budget permanently.
- */
 export async function deleteBudget(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync("DELETE FROM budgets WHERE id = ?;", id);
+  await queueCloudUpload(); // ← ADDED
 }

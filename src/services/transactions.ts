@@ -20,6 +20,7 @@ import {
   endOfMonth,
 } from "date-fns";
 
+import { queueCloudUpload } from "./cloudSync"; // ← ADDED
 
 // ---- Input types for creating/updating transactions ----
 
@@ -82,8 +83,6 @@ function mapRowToTransaction(row: any): Transaction {
   };
 }
 
-// Right now we just store note/merchant plain in the encrypted_* columns.
-// Later we'll plug in AES-GCM here, without changing the DB schema.
 function prepareEncryptedFields(input: {
   note?: string | null;
   merchant?: string | null;
@@ -98,9 +97,6 @@ function prepareEncryptedFields(input: {
 
 // ---- Public API ----
 
-/**
- * Create and persist a new transaction.
- */
 export async function createTransaction(
   input: CreateTransactionInput
 ): Promise<Transaction> {
@@ -117,24 +113,24 @@ export async function createTransaction(
 
   await db.runAsync(
     `
-    INSERT INTO transactions (
-      id,
-      type,
-      amount,
-      currency,
-      date,
-      category_id,
-      payment_method,
-      encrypted_note,
-      encrypted_merchant,
-      encrypted_metadata,
-      is_recurring,
-      recurring_rule,
-      source,
-      created_at,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-  `,
+      INSERT INTO transactions (
+        id,
+        type,
+        amount,
+        currency,
+        date,
+        category_id,
+        payment_method,
+        encrypted_note,
+        encrypted_merchant,
+        encrypted_metadata,
+        is_recurring,
+        recurring_rule,
+        source,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `,
     id,
     input.type,
     input.amount,
@@ -151,6 +147,8 @@ export async function createTransaction(
     now,
     now
   );
+
+  await queueCloudUpload(); // ← ADDED
 
   return {
     id,
@@ -171,10 +169,6 @@ export async function createTransaction(
   };
 }
 
-/**
- * Batch-import many transactions in a single DB transaction.
- * Useful for CSV import, backup restore, etc.
- */
 export async function importTransactionsBatch(
   inputs: CreateTransactionInput[]
 ): Promise<Transaction[]> {
@@ -198,24 +192,24 @@ export async function importTransactionsBatch(
 
       await db.runAsync(
         `
-        INSERT INTO transactions (
-          id,
-          type,
-          amount,
-          currency,
-          date,
-          category_id,
-          payment_method,
-          encrypted_note,
-          encrypted_merchant,
-          encrypted_metadata,
-          is_recurring,
-          recurring_rule,
-          source,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-      `,
+          INSERT INTO transactions (
+            id,
+            type,
+            amount,
+            currency,
+            date,
+            category_id,
+            payment_method,
+            encrypted_note,
+            encrypted_merchant,
+            encrypted_metadata,
+            is_recurring,
+            recurring_rule,
+            source,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        `,
         id,
         input.type,
         input.amount,
@@ -253,6 +247,7 @@ export async function importTransactionsBatch(
     }
 
     await db.execAsync("COMMIT;");
+    await queueCloudUpload(); // ← ADDED
     return created;
   } catch (err) {
     await db.execAsync("ROLLBACK;");
@@ -260,25 +255,16 @@ export async function importTransactionsBatch(
   }
 }
 
-/**
- * Fetch a single transaction by id.
- */
-export async function getTransactionById(
-  id: string
-): Promise<Transaction | null> {
+export async function getTransactionById(id: string): Promise<Transaction | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<any>(
     "SELECT * FROM transactions WHERE id = ?;",
     id
   );
-
   if (!row) return null;
   return mapRowToTransaction(row);
 }
 
-/**
- * List transactions with optional filters (date range, categories, type, etc.)
- */
 export async function listTransactions(
   filter: TransactionFilter = {}
 ): Promise<Transaction[]> {
@@ -340,9 +326,6 @@ export async function listTransactions(
   return rows.map(mapRowToTransaction);
 }
 
-/**
- * Update a transaction partially.
- */
 export async function updateTransaction(
   id: string,
   updates: UpdateTransactionInput
@@ -416,14 +399,14 @@ export async function updateTransaction(
     `,
     params
   );
+
+  await queueCloudUpload(); // ← ADDED
 }
 
-/**
- * Delete a transaction by id.
- */
 export async function deleteTransaction(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync("DELETE FROM transactions WHERE id = ?;", id);
+  await queueCloudUpload(); // ← ADDED
 }
 
 const WEEKDAY_MAP: Record<string, number> = {
@@ -437,8 +420,6 @@ const WEEKDAY_MAP: Record<string, number> = {
 };
 
 function clampMonthDay(date: Date, targetDay: number): Date {
-  // Return a date in the same month as `date` with day = targetDay,
-  // clamped to the last valid day of that month if needed.
   const monthStart = startOfMonth(date);
   const monthEnd = endOfMonth(date);
   const maxDay = monthEnd.getDate();
@@ -448,19 +429,6 @@ function clampMonthDay(date: Date, targetDay: number): Date {
   return d;
 }
 
-/**
- * Expand recurring transactions into concrete instances for a given date range.
- *
- * - Non-recurring transactions are included only if their original date is in [rangeStart, rangeEnd].
- * - Recurring transactions are expanded according to recurringRule JSON:
- *   {
- *     frequency: "daily" | "weekly" | "monthly",
- *     weekdays?: ["mon","wed",...],   // for weekly
- *     monthDay?: number               // for monthly
- *   }
- * - Each occurrence gets a synthetic id: `${originalId}__${isoDate}`.
- * - Expanded occurrences are returned with isRecurring = false so UI can treat them like normal instances.
- */
 export function expandRecurringTransactionsForRange(
   transactions: Transaction[],
   rangeStart: Date,
@@ -473,11 +441,9 @@ export function expandRecurringTransactionsForRange(
     try {
       txDate = parseISO(tx.date);
     } catch {
-      // Bad date → skip
       continue;
     }
 
-    // Non-recurring: just include if inside range
     if (!tx.isRecurring || !tx.recurringRule) {
       if (isWithinInterval(txDate, { start: rangeStart, end: rangeEnd })) {
         result.push(tx);
@@ -485,12 +451,10 @@ export function expandRecurringTransactionsForRange(
       continue;
     }
 
-    // Parse rule JSON
     let rule: any;
     try {
       rule = JSON.parse(tx.recurringRule);
     } catch {
-      // Fallback: treat as one-off
       if (isWithinInterval(txDate, { start: rangeStart, end: rangeEnd })) {
         result.push(tx);
       }
@@ -499,26 +463,20 @@ export function expandRecurringTransactionsForRange(
 
     const frequency: string = rule.frequency || "monthly";
 
-    // If the first possible occurrence starts after the range, nothing to show
-    if (isAfter(txDate, rangeEnd)) {
-      continue;
-    }
+    if (isAfter(txDate, rangeEnd)) continue;
 
     if (frequency === "daily") {
-      // Every day from max(startDate, rangeStart) to rangeEnd
       let cursor = txDate < rangeStart ? rangeStart : txDate;
 
       while (!isAfter(cursor, rangeEnd)) {
         result.push({
           ...tx,
-          id: `${tx.id}__${cursor.toISOString()}`,
           date: cursor.toISOString(),
           isRecurring: true,
         });
         cursor = addDays(cursor, 1);
       }
     } else if (frequency === "weekly") {
-      // Weekly: optional weekdays array, otherwise same weekday as original
       const originalWeekday = txDate.getDay();
       const ruleWeekdays: string[] | undefined = rule.weekdays;
       const weekdaySet = new Set<number>(
@@ -532,14 +490,12 @@ export function expandRecurringTransactionsForRange(
           .map((w) => WEEKDAY_MAP[w!.toLowerCase()] ?? originalWeekday)
       );
 
-      // Iterate day-by-day within range (usually 1–2 months, so this is fine)
       let cursor = rangeStart < txDate ? txDate : rangeStart;
 
       while (!isAfter(cursor, rangeEnd)) {
         if (cursor >= txDate && weekdaySet.has(cursor.getDay())) {
           result.push({
             ...tx,
-            id: `${tx.id}__${cursor.toISOString()}`,
             date: cursor.toISOString(),
             isRecurring: true,
           });
@@ -547,15 +503,13 @@ export function expandRecurringTransactionsForRange(
         cursor = addDays(cursor, 1);
       }
     } else {
-      // Monthly (default): either rule.monthDay or original transaction day
-      const baseDay = typeof rule.monthDay === "number"
-        ? rule.monthDay
-        : txDate.getDate();
+      const baseDay =
+        typeof rule.monthDay === "number"
+          ? rule.monthDay
+          : txDate.getDate();
 
-      // Start from the month that overlaps the max(rangeStart, txDate)
       let cursor = new Date(txDate);
 
-      // Move cursor forward month-by-month until it's in/after the range
       while (cursor < rangeStart) {
         cursor = addMonths(cursor, 1);
       }
@@ -563,10 +517,13 @@ export function expandRecurringTransactionsForRange(
       while (!isAfter(cursor, rangeEnd)) {
         const occurrence = clampMonthDay(cursor, baseDay);
 
-        if (!isAfter(occurrence, rangeEnd) && occurrence >= rangeStart && occurrence >= txDate) {
+        if (
+          !isAfter(occurrence, rangeEnd) &&
+          occurrence >= rangeStart &&
+          occurrence >= txDate
+        ) {
           result.push({
             ...tx,
-            id: `${tx.id}__${occurrence.toISOString()}`,
             date: occurrence.toISOString(),
             isRecurring: true,
           });
@@ -579,4 +536,3 @@ export function expandRecurringTransactionsForRange(
 
   return result;
 }
-

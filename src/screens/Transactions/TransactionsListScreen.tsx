@@ -213,27 +213,30 @@ const TransactionsListScreen: React.FC<Props> = ({ route, navigation }) => {
   );
 
   const handleDelete = (tx: Transaction) => {
-    Alert.alert(
-      "Delete expense",
-      "Are you sure you want to delete this expense? This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteTransaction(tx.id);
-              await loadTransactions();
-            } catch (e) {
-              console.error("Failed to delete transaction", e);
-              Alert.alert("Error", "Could not delete this expense.");
-            }
-          },
+    const title = tx.isRecurring ? "Delete recurring expense" : "Delete expense";
+
+    const message = tx.isRecurring
+      ? "This is a recurring expense. Deleting it will remove the entire series from all views. This cannot be undone."
+      : "Are you sure you want to delete this expense? This cannot be undone.";
+
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteTransaction(tx.id); // base id, so deletes the series
+            await loadTransactions();
+          } catch (e) {
+            console.error("Failed to delete transaction", e);
+            Alert.alert("Error", "Could not delete this expense.");
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
+
 
   const renderItem = ({ item }: { item: Transaction }) => {
     const category =
@@ -245,8 +248,7 @@ const TransactionsListScreen: React.FC<Props> = ({ route, navigation }) => {
         category={category}
         onDelete={() => handleDelete(item)}
         onEdit={() => {
-          // TODO: implement EditExpenseScreen later
-          Alert.alert("Coming soon", "Editing expenses will be added later.");
+            navigation.navigate("EditExpense", { transactionId: item.id });
         }}
       />
     );
@@ -364,7 +366,7 @@ const TransactionsListScreen: React.FC<Props> = ({ route, navigation }) => {
         {/* List */}
         <FlatList
           data={filteredTransactions}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => `${item.id}_${item.date}`}
           renderItem={renderItem}
           contentContainerStyle={[
             styles.listContent,

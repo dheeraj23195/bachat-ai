@@ -14,6 +14,8 @@ import ChatbotScreen from "../screens/Chatbot/ChatbotScreen";
 import AddBudgetScreen from "../screens/Budget/AddBudgetScreen";
 import EditBudgetCategoryScreen from '../screens/Budget/EditBudgetCategoryScreen';
 import TransactionsListScreen from '../screens/Transactions/TransactionsListScreen';
+import EditExpenseScreen from '../screens/Add/EditExpenseScreen';
+import CategoryManagementScreen from '../screens/Categories/CategoryManagementScreen';
 
 export type RootStackParamList = {
   AppTabs: undefined;
@@ -37,7 +39,8 @@ export type RootStackParamList = {
   };
 
   EditBudgetCategory: { budgetId: string };
-
+  EditExpense: { transactionId: string };
+  CategoryManagement: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -68,9 +71,20 @@ const RootNavigator: React.FC = () => {
         options={{ headerShown: false }} // or whatever you like
       />
       <Stack.Screen
+        name="CategoryManagement"
+        component={CategoryManagementScreen}
+        options={{ title: "Manage categories" }}
+      />
+
+      <Stack.Screen
         name="TransactionsList"
         component={TransactionsListScreen}
         options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="EditExpense"
+        component={EditExpenseScreen}
+        options={{ title: "Edit Expense" }}
       />
       <Stack.Screen
         name="EditBudgetCategory"

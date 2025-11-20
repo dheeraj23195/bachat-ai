@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,14 +6,23 @@ import {
   TouchableOpacity,
   ScrollView,
   Switch,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { AppTabParamList } from '../../navigation/AppTabs';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../../navigation/RootNavigator';
 import colors from '../../lib/colors';
+import { wipeAllAppData } from "../../services/wipe";
+import { getCurrentUser } from "../../services/supabaseClient";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+
+import { signOut } from "../../services/supabaseClient";
+import { clearEncryptionSecret } from "../../lib/authSecret";
+import { uploadEncryptedBackup } from "../../services/cloudSync";
+import { RootStackParamList } from "../../navigation/RootNavigator";
+import { resetDatabase } from '../../services/db';
+
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Settings'>;
 
@@ -22,21 +31,102 @@ const SettingsScreen: React.FC<Props> = ({}) => {
   const [biometricEnabled, setBiometricEnabled] = useState(true);
   const [aiSuggestionsEnabled, setAiSuggestionsEnabled] = useState(true);
   const [budgetAlertsEnabled, setBudgetAlertsEnabled] = useState(true);
-
+  const [profileName, setProfileName] = useState<string>('User');
+  const [profileEmail, setProfileEmail] = useState<string>('you@example.com');
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-
   const handleProfilePress = () => navigation.navigate('Profile');
-
-
+  const [syncing, setSyncing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const handleManageCategories = () => {
+    navigation.navigate('CategoryManagement');
+  };
   const handleExportData = () => {
     // later: open export flow
     console.log('Export data');
   };
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const user = await getCurrentUser();
+        if (user) {
+          const metaName =
+            (user.user_metadata as any)?.full_name as string | undefined;
+          setProfileName(metaName || 'Bachat user');
+          setProfileEmail(user.email ?? 'you@example.com');
+        }
+      } catch (e) {
+        console.log("[Settings] Failed to load Supabase user", e);
+      }
+    })();
+  }, []);
+
   const handleWipeData = () => {
-    // later: open confirm-wipe modal
-    console.log('Wipe data');
+    Alert.alert(
+      "Wipe all data?",
+      "This will permanently delete all expenses, budgets, and categories on this device. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Erase everything",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await wipeAllAppData();
+              Alert.alert("Data deleted", "Your app has been reset.");
+              navigation.reset({
+                index: 0,
+                routes: [{ name: "Home" as keyof RootStackParamList }],
+              });
+            } catch (err) {
+              console.error("Failed wiping data", err);
+              Alert.alert(
+                "Error",
+                "Something went wrong while wiping data. Please try again."
+              );
+            }
+          },
+        },
+      ]
+    );
   };
+
+  const handleLogout = () => {
+    Alert.alert(
+      "Log out",
+      "Are you sure you want to log out of Bachat AI on this device?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log out",
+          style: "destructive",
+          onPress: async () => {
+            if (loggingOut) return;
+            setLoggingOut(true);
+            try {
+              await signOut();              // Supabase session
+              await clearEncryptionSecret(); // local encryption secret
+              await resetDatabase();       // local database
+
+              navigation.reset({
+                index: 0,
+                routes: [{ name: "SignIn" }],
+              });
+            } catch (err: any) {
+              console.error("[Settings] Logout failed", err);
+              Alert.alert(
+                "Logout failed",
+                err?.message ?? "Something went wrong while logging out."
+              );
+            } finally {
+              setLoggingOut(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
 
   const handleAboutPress = () => {
     // later: navigate to About / Info page
@@ -65,14 +155,17 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           onPress={handleProfilePress}
         >
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>A</Text>
+            <Text style={styles.avatarText}>
+              {profileName.charAt(0).toUpperCase()}
+            </Text>
           </View>
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>Adarsh Bhatt</Text>
-            <Text style={styles.profileEmail}>you@example.com</Text>
+            <Text style={styles.profileName}>{profileName}</Text>
+            <Text style={styles.profileEmail}>{profileEmail}</Text>
           </View>
           <Text style={styles.chevron}>{'›'}</Text>
         </TouchableOpacity>
+
 
         {/* Data & security */}
         <View style={styles.section}>
@@ -153,6 +246,22 @@ const SettingsScreen: React.FC<Props> = ({}) => {
             <TouchableOpacity
               style={styles.actionRow}
               activeOpacity={0.8}
+              onPress={handleManageCategories}
+            >
+              <View style={styles.actionTextContainer}>
+                <Text style={styles.actionTitle}>Manage categories</Text>
+                <Text style={styles.actionSubtitle}>
+                  Edit names, colors, and clean up unused categories
+                </Text>
+              </View>
+              <Text style={styles.chevron}>{'›'}</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            <TouchableOpacity
+              style={styles.actionRow}
+              activeOpacity={0.8}
               onPress={handleExportData}
             >
               <View style={styles.actionTextContainer}>
@@ -184,6 +293,7 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           </View>
         </View>
 
+
         {/* About */}
         <View style={styles.section}>
           <View style={styles.card}>
@@ -202,6 +312,18 @@ const SettingsScreen: React.FC<Props> = ({}) => {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Log out button */}
+        <TouchableOpacity
+          style={styles.dangerButton}
+          activeOpacity={0.8}
+          onPress={handleLogout}
+          disabled={loggingOut}
+        >
+          <Text style={styles.dangerButtonText}>
+            {loggingOut ? "Logging out…" : "Log Out"}
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -388,6 +510,31 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  secondaryButton: {
+    marginTop: 24,
+    borderRadius: 20,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  secondaryButtonText: {
+    fontSize: 15,
+    color: colors.textPrimary,
+    fontWeight: "500",
+  },
+  dangerButton: {
+    marginTop: 16,
+    borderRadius: 20,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: "#F87171",
+  },
+  dangerButtonText: {
+    fontSize: 15,
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   pillText: {
     fontSize: 12,

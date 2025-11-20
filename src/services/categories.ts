@@ -1,22 +1,28 @@
 // src/services/categories.ts
 
-import { getDb } from './db';
-import { Category } from '../lib/types';
+import { getDb } from "./db";
+import { Category, CategoryUsage } from "../lib/types";
+import { queueCloudUpload } from "./cloudSync"; // ← ADDED
 
 // ---------- Default categories ----------
 
-const DEFAULT_CATEGORIES: Array<{
-  id: string;
-  name: string;
-  icon?: string | null;
-  colorHex?: string | null;
-}> = [
-  { id: 'food', name: 'Food & Dining', icon: 'utensils', colorHex: '#F97316' },
-  { id: 'transport', name: 'Transport', icon: 'car', colorHex: '#6366F1' },
-  { id: 'shopping', name: 'Shopping', icon: 'shopping-bag', colorHex: '#EC4899' },
-  { id: 'subscriptions', name: 'Subscriptions', icon: 'repeat', colorHex: '#A855F7' },
-  { id: 'bills', name: 'Bills & Utilities', icon: 'bill', colorHex: '#22C55E' },
-  { id: 'other', name: 'Other', icon: 'dots-horizontal', colorHex: '#6B7280' },
+const DEFAULT_CATEGORIES = [
+  { id: "food", name: "Food & Dining", icon: "utensils", colorHex: "#F97316" },
+  { id: "transport", name: "Transport", icon: "car", colorHex: "#6366F1" },
+  {
+    id: "shopping",
+    name: "Shopping",
+    icon: "shopping-bag",
+    colorHex: "#EC4899",
+  },
+  {
+    id: "subscriptions",
+    name: "Subscriptions",
+    icon: "repeat",
+    colorHex: "#A855F7",
+  },
+  { id: "bills", name: "Bills & Utilities", icon: "bill", colorHex: "#22C55E" },
+  { id: "other", name: "Other", icon: "dots-horizontal", colorHex: "#6B7280" },
 ];
 
 // ---------- Helpers ----------
@@ -33,7 +39,7 @@ function mapRowToCategory(row: any): Category {
   };
 }
 
-function generateCategoryId(prefix: string = 'cat'): string {
+function generateCategoryId(prefix: string = "cat"): string {
   return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 }
 
@@ -41,16 +47,12 @@ function slugifyName(name: string): string {
   return name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 // ---------- Public API ----------
 
-/**
- * Ensure our built-in default categories exist.
- * Safe to call on startup; uses INSERT OR IGNORE.
- */
 export async function ensureDefaultCategories(): Promise<void> {
   const db = await getDb();
   const now = new Date().toISOString();
@@ -72,16 +74,13 @@ export async function ensureDefaultCategories(): Promise<void> {
       cat.name,
       cat.icon ?? null,
       cat.colorHex ?? null,
-      1, // is_default
+      1,
       now,
       now
     );
   }
 }
 
-/**
- * Create a new category explicitly.
- */
 export async function createCategory(input: {
   id?: string;
   name: string;
@@ -93,13 +92,10 @@ export async function createCategory(input: {
   const now = new Date().toISOString();
 
   const nameTrimmed = input.name.trim();
-  let id: string;
-  if (input.id) {
-    id = input.id;
-  } else {
-    const slug = slugifyName(nameTrimmed);
-    id = slug.length > 0 ? slug : generateCategoryId();
-  }
+  let id =
+    input.id ??
+    (slugifyName(nameTrimmed) || generateCategoryId());
+
   const isDefault = input.isDefault ?? false;
 
   await db.runAsync(
@@ -123,6 +119,8 @@ export async function createCategory(input: {
     now
   );
 
+  await queueCloudUpload(); // ← ADDED
+
   return {
     id,
     name: nameTrimmed,
@@ -134,25 +132,17 @@ export async function createCategory(input: {
   };
 }
 
-/**
- * Get a single category by id.
- */
 export async function getCategoryById(id: string): Promise<Category | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<any>(
-    'SELECT * FROM categories WHERE id = ?;',
+    "SELECT * FROM categories WHERE id = ?;",
     id
   );
   if (!row) return null;
   return mapRowToCategory(row);
 }
 
-/**
- * Find a category by name (case-insensitive).
- */
-export async function findCategoryByName(
-  name: string
-): Promise<Category | null> {
+export async function findCategoryByName(name: string): Promise<Category | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<any>(
     `
@@ -166,18 +156,12 @@ export async function findCategoryByName(
   return mapRowToCategory(row);
 }
 
-/**
- * Ensure there is a category for this name.
- * If one exists (case-insensitive), returns it.
- * Otherwise creates a new custom category with the provided color.
- */
 export async function ensureCategoryByName(
   name: string,
   colorHex: string
 ): Promise<Category> {
   const existing = await findCategoryByName(name);
   if (existing) {
-    // If it exists but has no color yet, optionally update it with the new color
     if (!existing.colorHex && colorHex) {
       await updateCategory(existing.id, { colorHex });
       return { ...existing, colorHex };
@@ -185,20 +169,14 @@ export async function ensureCategoryByName(
     return existing;
   }
 
-  const finalColor = colorHex || '#6B7280';
-
-  // New custom category with auto id + chosen color
   return createCategory({
     name,
     isDefault: false,
-    colorHex: finalColor,
+    colorHex,
     icon: null,
   });
 }
 
-/**
- * List all categories (defaults + custom), ordered by name.
- */
 export async function listCategories(): Promise<Category[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(
@@ -210,16 +188,41 @@ export async function listCategories(): Promise<Category[]> {
   return rows.map(mapRowToCategory);
 }
 
-/**
- * Update an existing category.
- */
+export async function getCategoryUsage(
+  categoryId: string
+): Promise<CategoryUsage> {
+  const db = await getDb();
+
+  const txRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM transactions WHERE category_id = ?;`,
+    categoryId
+  );
+
+  const budRow = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) as count FROM budgets WHERE category_id = ?;`,
+    categoryId
+  );
+
+  return {
+    transactionCount: txRow?.count ?? 0,
+    budgetCount: budRow?.count ?? 0,
+  };
+}
+
+export class CategoryInUseError extends Error {
+  transactionCount: number;
+  budgetCount: number;
+
+  constructor(transactionCount: number, budgetCount: number) {
+    super("CATEGORY_IN_USE");
+    this.transactionCount = transactionCount;
+    this.budgetCount = budgetCount;
+  }
+}
+
 export async function updateCategory(
   id: string,
-  updates: {
-    name?: string;
-    icon?: string | null;
-    colorHex?: string | null;
-  }
+  updates: { name?: string; icon?: string | null; colorHex?: string | null }
 ): Promise<void> {
   const db = await getDb();
 
@@ -227,26 +230,22 @@ export async function updateCategory(
   const params: any[] = [];
 
   if (updates.name !== undefined) {
-    fields.push('name = ?');
+    fields.push("name = ?");
     params.push(updates.name.trim());
   }
 
   if (updates.icon !== undefined) {
-    fields.push('icon = ?');
+    fields.push("icon = ?");
     params.push(updates.icon);
   }
 
   if (updates.colorHex !== undefined) {
-    fields.push('color_hex = ?');
+    fields.push("color_hex = ?");
     params.push(updates.colorHex);
   }
 
-  if (fields.length === 0) {
-    return;
-  }
-
   const now = new Date().toISOString();
-  fields.push('updated_at = ?');
+  fields.push("updated_at = ?");
   params.push(now);
 
   params.push(id);
@@ -254,18 +253,24 @@ export async function updateCategory(
   await db.runAsync(
     `
       UPDATE categories
-      SET ${fields.join(', ')}
+      SET ${fields.join(", ")}
       WHERE id = ?;
     `,
     params
   );
+
+  await queueCloudUpload(); // ← ADDED
 }
 
-/**
- * Delete a category. (For now we DO NOT touch budgets/transactions.)
- * Later we can add safety: prevent delete if in use.
- */
 export async function deleteCategory(id: string): Promise<void> {
   const db = await getDb();
-  await db.runAsync('DELETE FROM categories WHERE id = ?;', id);
+
+  const { transactionCount, budgetCount } = await getCategoryUsage(id);
+
+  if (transactionCount > 0 || budgetCount > 0) {
+    throw new CategoryInUseError(transactionCount, budgetCount);
+  }
+
+  await db.runAsync(`DELETE FROM categories WHERE id = ?;`, id);
+  await queueCloudUpload(); // ← ADDED
 }

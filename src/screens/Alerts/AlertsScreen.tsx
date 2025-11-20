@@ -1,21 +1,129 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Switch,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import colors from '../../lib/colors';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch } from 'react-native';
+import colors from '../../lib/colors';
+import { useTransactionsStore } from '../../store/useTransactionsStore';
+import { listBudgets } from '../../services/budgets';
+import { listCategories } from '../../services/categories';
+import { expandRecurringTransactionsForRange } from '../../services/transactions';
+import { Budget, Category, Transaction } from '../../lib/types';
+import { startOfMonth, endOfMonth, parseISO, isWithinInterval } from 'date-fns';
 
 
 const AlertsScreen: React.FC = () => {
   const [monthlyLimitAlert, setMonthlyLimitAlert] = useState(true);
   const [categoryLimitAlert, setCategoryLimitAlert] = useState(true);
   const [dailyOverspendAlert, setDailyOverspendAlert] = useState(false);
+
+  // ---- NEW: budgets + categories + transactions ----
+  const transactions = useTransactionsStore((s) => s.transactions);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const monthStart = startOfMonth(new Date());
+  const monthEnd = endOfMonth(new Date());
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true);
+        const [budgetRows, categoryRows] = await Promise.all([
+          listBudgets({ activeOnly: true }),
+          listCategories(),
+        ]);
+        setBudgets(budgetRows);
+        setCategories(categoryRows);
+      } catch (e) {
+        console.error('Failed to load budgets/categories for alerts', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, []);
+
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, Category>();
+    categories.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [categories]);
+
+  // Expand recurring & filter to this month, expenses only
+  const monthlyExpenses = useMemo(() => {
+    const expanded = expandRecurringTransactionsForRange(
+      transactions,
+      monthStart,
+      monthEnd
+    );
+
+    return expanded.filter((tx) => {
+      if (tx.type !== 'expense') return false;
+      try {
+        const d = parseISO(tx.date);
+        return isWithinInterval(d, { start: monthStart, end: monthEnd });
+      } catch {
+        return false;
+      }
+    });
+  }, [transactions, monthStart, monthEnd]);
+
+  // Spend per category
+  const spendByCategory = useMemo(() => {
+    const map = new Map<string | null, number>();
+    monthlyExpenses.forEach((tx) => {
+      const key = tx.categoryId ?? null;
+      map.set(key, (map.get(key) || 0) + tx.amount);
+    });
+    return map;
+  }, [monthlyExpenses]);
+
+  type AlertStatus = 'on_track' | 'near' | 'over';
+
+  type BudgetAlert = {
+    id: string;
+    categoryId: string | null;
+    categoryName: string;
+    color: string;
+    spent: number;
+    limit: number;
+    thresholdPercent: number;
+    usagePercent: number;
+    status: AlertStatus;
+  };
+
+  const budgetAlerts: BudgetAlert[] = useMemo(() => {
+    return budgets
+      .filter((b) => b.limitAmount > 0)
+      .map((b) => {
+        const spent = spendByCategory.get(b.categoryId ?? null) || 0;
+        const usagePercent = (spent / b.limitAmount) * 100;
+
+        let status: AlertStatus = 'on_track';
+        if (usagePercent >= 100) {
+          status = 'over';
+        } else if (usagePercent >= b.alertThresholdPercent) {
+          status = 'near';
+        }
+
+        const cat =
+          b.categoryId !== null ? categoryMap.get(b.categoryId) ?? null : null;
+
+        return {
+          id: b.id,
+          categoryId: b.categoryId ?? null,
+          categoryName: cat?.name ?? (b.categoryId ? 'Category' : 'Overall'),
+          color: cat?.colorHex ?? colors.primary,
+          spent,
+          limit: b.limitAmount,
+          thresholdPercent: b.alertThresholdPercent,
+          usagePercent,
+          status,
+        };
+      });
+  }, [budgets, spendByCategory, categoryMap]);
 
   const navigation = useNavigation();
   const handleBack = () => navigation.goBack();
@@ -84,6 +192,72 @@ const AlertsScreen: React.FC = () => {
             />
           </View>
         </View>
+
+                {/* Current alerts */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Current status</Text>
+          <Text style={styles.sectionSubtitle}>
+            How close you are to each budget
+          </Text>
+
+          <View style={styles.card}>
+            {loading ? (
+              <Text style={styles.rowSubtitle}>Loading…</Text>
+            ) : budgetAlerts.length === 0 ? (
+              <Text style={styles.rowSubtitle}>
+                No budgets set up yet. Create a budget to see alerts here.
+              </Text>
+            ) : (
+              budgetAlerts.map((alert) => (
+                <View key={alert.id} style={styles.alertRow}>
+                  <View style={styles.alertLeft}>
+                    <View
+                      style={[
+                        styles.alertColorDot,
+                        { backgroundColor: alert.color },
+                      ]}
+                    />
+                    <View>
+                      <Text style={styles.rowTitle}>
+                        {alert.categoryName}
+                      </Text>
+                      <Text style={styles.rowSubtitle}>
+                        ₹{alert.spent.toLocaleString()} of ₹
+                        {alert.limit.toLocaleString()} • Alert at{' '}
+                        {alert.thresholdPercent}%
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.alertRight}>
+                    <View
+                      style={[
+                        styles.statusPill,
+                        alert.status === 'over'
+                          ? styles.statusPillOver
+                          : alert.status === 'near'
+                          ? styles.statusPillNear
+                          : styles.statusPillOk,
+                      ]}
+                    >
+                      <Text style={styles.statusPillText}>
+                        {alert.status === 'over'
+                          ? 'Over'
+                          : alert.status === 'near'
+                          ? 'Near limit'
+                          : 'On track'}
+                      </Text>
+                    </View>
+                    <Text style={styles.alertUsageText}>
+                      {alert.usagePercent.toFixed(0)}%
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </View>
+
 
         {/* Quiet hours */}
         <View style={styles.section}>
@@ -283,6 +457,50 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: 20,
     color: colors.textSecondary,
+  },
+    alertRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  alertLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    paddingRight: 12,
+  },
+  alertColorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  alertRight: {
+    alignItems: 'flex-end',
+  },
+  alertUsageText: {
+    marginTop: 2,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  statusPillOver: {
+    backgroundColor: '#EF4444',
+  },
+  statusPillNear: {
+    backgroundColor: '#F97316',
+  },
+  statusPillOk: {
+    backgroundColor: '#22C55E',
   },
 });
 

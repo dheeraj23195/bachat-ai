@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -6,25 +6,92 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-} from 'react-native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../../navigation/RootNavigator';
-import colors from '../../lib/colors';
+  Alert,
+  ActivityIndicator,
+} from "react-native";
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { RootStackParamList } from "../../navigation/RootNavigator";
+import colors from "../../lib/colors";
+import { signInWithEmail } from "../../services/supabaseClient";
+import { clearEncryptionSecret } from "../../lib/authSecret"; // For logout in future
+import { downloadAndRestoreBackup, clearCloudBackup } from "../../services/cloudSync";
+import { saveEncryptionSecret } from "../../lib/authSecret";
 
-type Props = NativeStackScreenProps<RootStackParamList, 'SignIn'>;
+type Props = NativeStackScreenProps<RootStackParamList, "SignIn">;
 
 const SignInScreen: React.FC<Props> = ({ navigation }) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const handleBack = () => {
     navigation.goBack();
   };
 
-  const handleSignIn = () => {
-    // TODO: wire auth later
-    navigation.navigate('AppTabs');
+  const handleSignIn = async () => {
+    if (submitting) return;
+
+    const trimmedEmail = email.trim().toLowerCase();
+    setErrorMessage(null);
+
+    if (!trimmedEmail || !password) {
+      setErrorMessage('Please enter both email and password.');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+
+      const user = await signInWithEmail(trimmedEmail, password);
+      if (!user) {
+        throw new Error('Sign-in failed. Please check your credentials.');
+      }
+
+      // Save encryption secret (password) locally
+      await saveEncryptionSecret(password);
+
+      // Try to restore backup using stored secret
+      try {
+        await downloadAndRestoreBackup();
+        console.log('[Auth] Cloud restore complete');
+        Alert.alert('Synced', 'Your data has been restored from the cloud.');
+      } catch (restoreErr: any) {
+        console.warn(
+          '[Auth] Cloud restore failed or no backup:',
+          restoreErr?.message
+        );
+        // Optional: wipe old backup if decrypt failed due to password reset
+        try {
+          await clearCloudBackup();
+        } catch (wipeErr) {
+          console.warn('[Auth] Failed to wipe cloud backup:', wipeErr);
+        }
+      }
+
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'AppTabs' }],
+      });
+    } catch (err: any) {
+      console.error('SignIn error', err);
+      setErrorMessage(err?.message ?? 'Failed to sign in. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
+
   const goToSignUp = () => {
-    navigation.navigate('SignUp');
+    navigation.navigate("SignUp");
+  };
+
+  const handleForgotPassword = () => {
+    Alert.alert(
+      "Not implemented yet",
+      "Password reset via email can be added later via Supabase auth."
+    );
   };
 
   return (
@@ -36,7 +103,7 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
       {/* Custom header */}
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Text style={styles.backIcon}>{'‹'}</Text>
+          <Text style={styles.backIcon}>{"‹"}</Text>
         </TouchableOpacity>
       </View>
 
@@ -68,6 +135,9 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
             placeholderTextColor={colors.placeholder}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
+            value={email}
+            onChangeText={setEmail}
           />
         </View>
       </View>
@@ -75,7 +145,7 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
       <View style={styles.formGroup}>
         <View style={styles.labelRow}>
           <Text style={styles.label}>Password</Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={handleForgotPassword}>
             <Text style={styles.linkText}>Forgot Password?</Text>
           </TouchableOpacity>
         </View>
@@ -85,16 +155,27 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
             placeholder="Enter your password"
             placeholderTextColor={colors.placeholder}
             secureTextEntry
+            value={password}
+            onChangeText={setPassword}
           />
         </View>
       </View>
 
+      {errorMessage ? (
+        <Text style={styles.errorText}>{errorMessage}</Text>
+      ) : null}
+
       <TouchableOpacity
-        style={styles.primaryButton}
+        style={[styles.primaryButton, submitting && { opacity: 0.6 }]}
         activeOpacity={0.8}
         onPress={handleSignIn}
+        disabled={submitting}
       >
-        <Text style={styles.primaryButtonText}>Sign In</Text>
+        {submitting ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.primaryButtonText}>Sign In</Text>
+        )}
       </TouchableOpacity>
 
       <View style={styles.footerRow}>
@@ -118,16 +199,16 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 16,
   },
   backButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   backIcon: {
     fontSize: 26,
@@ -135,7 +216,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 26,
-    fontWeight: '700',
+    fontWeight: "700",
     color: colors.textPrimary,
     marginTop: 8,
   },
@@ -148,17 +229,17 @@ const styles = StyleSheet.create({
     marginTop: 24,
     padding: 16,
     borderRadius: 16,
-    backgroundColor: '#E9F7EE',
-    flexDirection: 'row',
-    alignItems: 'center',
+    backgroundColor: "#E9F7EE",
+    flexDirection: "row",
+    alignItems: "center",
   },
   infoIconCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#DCFCE7',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#DCFCE7",
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 12,
   },
   infoIcon: {
@@ -169,7 +250,7 @@ const styles = StyleSheet.create({
   },
   infoTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     color: colors.textPrimary,
   },
   infoSubtitle: {
@@ -182,14 +263,14 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: "500",
     color: colors.textPrimary,
     marginBottom: 8,
   },
   labelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 8,
   },
   inputWrapper: {
@@ -207,24 +288,29 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 13,
     color: colors.primary,
-    fontWeight: '500',
+    fontWeight: "500",
+  },
+  errorText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: "#EF4444",
   },
   primaryButton: {
-    marginTop: 32,
+    marginTop: 24,
     backgroundColor: colors.primary,
     borderRadius: 24,
     paddingVertical: 14,
-    alignItems: 'center',
+    alignItems: "center",
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   footerRow: {
     marginTop: 16,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    flexDirection: "row",
+    justifyContent: "center",
   },
   footerText: {
     fontSize: 14,
@@ -233,7 +319,7 @@ const styles = StyleSheet.create({
   footerLink: {
     fontSize: 14,
     color: colors.primary,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 });
 
