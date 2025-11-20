@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
@@ -14,35 +15,33 @@ import { AppTabParamList } from '../../navigation/AppTabs';
 import colors from '../../lib/colors';
 import { wipeAllAppData } from "../../services/wipe";
 import { getCurrentUser } from "../../services/supabaseClient";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { signOut } from "../../services/supabaseClient";
 import { clearEncryptionSecret } from "../../lib/authSecret";
-import { uploadEncryptedBackup } from "../../services/cloudSync";
 import { RootStackParamList } from "../../navigation/RootNavigator";
 import { resetDatabase } from '../../services/db';
-
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getDb } from "../../services/db";
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Settings'>;
 
+const AVATAR_STORAGE_KEY = "bachat:user_avatar_uri";
+
 const SettingsScreen: React.FC<Props> = ({}) => {
-  const [pinLockEnabled, setPinLockEnabled] = useState(true);
   const [biometricEnabled, setBiometricEnabled] = useState(true);
-  const [aiSuggestionsEnabled, setAiSuggestionsEnabled] = useState(true);
   const [budgetAlertsEnabled, setBudgetAlertsEnabled] = useState(true);
   const [profileName, setProfileName] = useState<string>('User');
   const [profileEmail, setProfileEmail] = useState<string>('you@example.com');
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const handleProfilePress = () => navigation.navigate('Profile');
-  const [syncing, setSyncing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleProfilePress = () => navigation.navigate('Profile');
   const handleManageCategories = () => {
     navigation.navigate('CategoryManagement');
-  };
-  const handleExportData = () => {
-    // later: open export flow
-    console.log('Export data');
   };
 
   useEffect(() => {
@@ -55,11 +54,48 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           setProfileName(metaName || 'Bachat user');
           setProfileEmail(user.email ?? 'you@example.com');
         }
+
+        const storedAvatar = await AsyncStorage.getItem(AVATAR_STORAGE_KEY);
+        if (storedAvatar) {
+          setAvatarUri(storedAvatar);
+        }
       } catch (e) {
-        console.log("[Settings] Failed to load Supabase user", e);
+        console.log("[Settings] Failed to load Supabase user or avatar", e);
       }
     })();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        try {
+          let storedAvatar = await AsyncStorage.getItem(AVATAR_STORAGE_KEY);
+          if (!storedAvatar) {
+            try {
+              const db = await getDb();
+              const us = await db.getFirstAsync<{ avatar_base64?: string }>(
+                "SELECT avatar_base64 FROM user_settings WHERE id = ?",
+                "default" // or whatever USER_SETTINGS_ID you used
+              );
+              if (us?.avatar_base64) {
+                storedAvatar = `data:image/jpeg;base64,${us.avatar_base64}`;
+                await AsyncStorage.setItem(AVATAR_STORAGE_KEY, storedAvatar);
+              }
+            } catch (e) {
+              console.log("[Settings] Failed to load avatar_base64 from DB", e);
+            }
+          }
+
+          if (storedAvatar) {
+            setAvatarUri(storedAvatar);
+          }
+        } catch (e) {
+          console.log("[Settings] Failed to refresh avatar", e);
+        }
+      })();
+    }, [])
+  );
+
 
   const handleWipeData = () => {
     Alert.alert(
@@ -106,7 +142,7 @@ const SettingsScreen: React.FC<Props> = ({}) => {
             try {
               await signOut();              // Supabase session
               await clearEncryptionSecret(); // local encryption secret
-              await resetDatabase();       // local database
+              await resetDatabase();         // local database
 
               navigation.reset({
                 index: 0,
@@ -127,10 +163,43 @@ const SettingsScreen: React.FC<Props> = ({}) => {
     );
   };
 
+  const handleWipeCloudBackup = () => {
+    Alert.alert(
+      "Wipe cloud backup?",
+      "This will delete your encrypted backup from the server. Your local data on this device will stay as is.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete backup",
+          style: "destructive",
+          onPress: async () => {
+            // TODO: hook into a real wipeCloudBackup() in cloudSync.ts
+            Alert.alert(
+              "Coming soon",
+              "Wiping the server backup will be available in a future update."
+            );
+          },
+        },
+      ]
+    );
+  };
+
+  const handleChangePin = () => {
+    Alert.alert(
+      "Change PIN",
+      "In the final flow, you’ll verify your current PIN and then set a new one. This is a placeholder for now."
+    );
+  };
+
+  const handleForgotPin = () => {
+    Alert.alert(
+      "Forgot PIN",
+      "In the final flow, you’ll verify using your account password and then reset your PIN. This is a placeholder for now."
+    );
+  };
 
   const handleAboutPress = () => {
-    // later: navigate to About / Info page
-    console.log('About pressed');
+    navigation.navigate("About");
   };
 
   return (
@@ -155,9 +224,13 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           onPress={handleProfilePress}
         >
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {profileName.charAt(0).toUpperCase()}
-            </Text>
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>
+                {profileName.charAt(0).toUpperCase()}
+              </Text>
+            )}
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{profileName}</Text>
@@ -165,7 +238,6 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           </View>
           <Text style={styles.chevron}>{'›'}</Text>
         </TouchableOpacity>
-
 
         {/* Data & security */}
         <View style={styles.section}>
@@ -175,35 +247,61 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           </Text>
 
           <View style={styles.card}>
-            <SettingsRow
-              title="Local, offline storage"
-              subtitle="All transactions and budgets are stored only on this device"
-              rightElement={
-                <PillLabel text="Enabled" variant="success" />
-              }
-            />
+            {/* Wipe cloud backup */}
+            <TouchableOpacity
+              style={styles.actionRow}
+              activeOpacity={0.8}
+              onPress={handleWipeCloudBackup}
+            >
+              <View style={styles.actionTextContainer}>
+                <Text style={styles.actionTitle}>Wipe cloud backup</Text>
+                <Text style={styles.actionSubtitle}>
+                  Delete your encrypted backup from the server
+                </Text>
+              </View>
+              <Text style={styles.chevron}>{'›'}</Text>
+            </TouchableOpacity>
+
             <View style={styles.divider} />
 
-            <SettingsRow
-              title="Encryption"
-              subtitle="AES-GCM with keys stored in secure enclave"
-              rightElement={
-                <PillLabel text="On-device" variant="default" />
-              }
-            />
+            {/* Change PIN */}
+            <TouchableOpacity
+              style={styles.actionRow}
+              activeOpacity={0.8}
+              onPress={handleChangePin}
+            >
+              <View style={styles.actionTextContainer}>
+                <Text style={styles.actionTitle}>Change PIN</Text>
+                <Text style={styles.actionSubtitle}>
+                  Update your app PIN (requires current PIN)
+                </Text>
+              </View>
+              <Text style={styles.chevron}>{'›'}</Text>
+            </TouchableOpacity>
+
             <View style={styles.divider} />
 
-            <SettingsSwitchRow
-              title="PIN / passcode lock"
-              subtitle="Require a PIN to open Bachat AI"
-              value={pinLockEnabled}
-              onValueChange={setPinLockEnabled}
-            />
+            {/* Forgot PIN */}
+            <TouchableOpacity
+              style={styles.actionRow}
+              activeOpacity={0.8}
+              onPress={handleForgotPin}
+            >
+              <View style={styles.actionTextContainer}>
+                <Text style={styles.actionTitle}>Forgot PIN</Text>
+                <Text style={styles.actionSubtitle}>
+                  Reset PIN using your account password
+                </Text>
+              </View>
+              <Text style={styles.chevron}>{'›'}</Text>
+            </TouchableOpacity>
+
             <View style={styles.divider} />
 
+            {/* Biometric unlock toggle (placeholder, recommended) */}
             <SettingsSwitchRow
               title="Biometric unlock"
-              subtitle="Use Face ID / fingerprint where available"
+              subtitle="Use Face ID / fingerprint to unlock Bachat AI (recommended)"
               value={biometricEnabled}
               onValueChange={setBiometricEnabled}
             />
@@ -219,14 +317,6 @@ const SettingsScreen: React.FC<Props> = ({}) => {
 
           <View style={styles.card}>
             <SettingsSwitchRow
-              title="AI category suggestions"
-              subtitle="Get suggested categories when adding expenses"
-              value={aiSuggestionsEnabled}
-              onValueChange={setAiSuggestionsEnabled}
-            />
-            <View style={styles.divider} />
-
-            <SettingsSwitchRow
               title="Budget alerts"
               subtitle="Smart alerts when you approach budget limits"
               value={budgetAlertsEnabled}
@@ -239,7 +329,7 @@ const SettingsScreen: React.FC<Props> = ({}) => {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Your data</Text>
           <Text style={styles.sectionSubtitle}>
-            Export or wipe your data any time. You&apos;re in control.
+            You&apos;re in control of your data on this device.
           </Text>
 
           <View style={styles.card}>
@@ -252,22 +342,6 @@ const SettingsScreen: React.FC<Props> = ({}) => {
                 <Text style={styles.actionTitle}>Manage categories</Text>
                 <Text style={styles.actionSubtitle}>
                   Edit names, colors, and clean up unused categories
-                </Text>
-              </View>
-              <Text style={styles.chevron}>{'›'}</Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-
-            <TouchableOpacity
-              style={styles.actionRow}
-              activeOpacity={0.8}
-              onPress={handleExportData}
-            >
-              <View style={styles.actionTextContainer}>
-                <Text style={styles.actionTitle}>Export data</Text>
-                <Text style={styles.actionSubtitle}>
-                  Export all transactions and budgets as encrypted backup or CSV
                 </Text>
               </View>
               <Text style={styles.chevron}>{'›'}</Text>
@@ -293,7 +367,6 @@ const SettingsScreen: React.FC<Props> = ({}) => {
           </View>
         </View>
 
-
         {/* About */}
         <View style={styles.section}>
           <View style={styles.card}>
@@ -305,7 +378,7 @@ const SettingsScreen: React.FC<Props> = ({}) => {
               <View style={styles.actionTextContainer}>
                 <Text style={styles.actionTitle}>About Bachat AI</Text>
                 <Text style={styles.actionSubtitle}>
-                  Version 1.0 · Local-first · Made for privacy
+                  Team FungUsS · User guide & credits
                 </Text>
               </View>
               <Text style={styles.chevron}>{'›'}</Text>
@@ -328,26 +401,6 @@ const SettingsScreen: React.FC<Props> = ({}) => {
     </SafeAreaView>
   );
 };
-
-type SettingsRowProps = {
-  title: string;
-  subtitle?: string;
-  rightElement?: React.ReactNode;
-};
-
-const SettingsRow: React.FC<SettingsRowProps> = ({
-  title,
-  subtitle,
-  rightElement,
-}) => (
-  <View style={styles.row}>
-    <View style={styles.rowTextContainer}>
-      <Text style={styles.rowTitle}>{title}</Text>
-      {subtitle ? <Text style={styles.rowSubtitle}>{subtitle}</Text> : null}
-    </View>
-    {rightElement}
-  </View>
-);
 
 type SettingsSwitchRowProps = {
   title: string;
@@ -375,24 +428,6 @@ const SettingsSwitchRow: React.FC<SettingsSwitchRowProps> = ({
     />
   </View>
 );
-
-type PillLabelProps = {
-  text: string;
-  variant?: 'default' | 'success';
-};
-
-const PillLabel: React.FC<PillLabelProps> = ({ text, variant = 'default' }) => {
-  const bg =
-    variant === 'success' ? '#DCFCE7' : '#E5E7EB';
-  const fg =
-    variant === 'success' ? '#16A34A' : colors.textSecondary;
-
-  return (
-    <View style={[styles.pill, { backgroundColor: bg }]}>
-      <Text style={[styles.pillText, { color: fg }]}>{text}</Text>
-    </View>
-  );
-};
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -441,6 +476,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 20,
   },
   avatarText: {
     fontSize: 18,
@@ -506,11 +547,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 2,
   },
-  pill: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
   secondaryButton: {
     marginTop: 24,
     borderRadius: 20,
@@ -535,10 +571,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#FFFFFF",
     fontWeight: "600",
-  },
-  pillText: {
-    fontSize: 12,
-    fontWeight: '600',
   },
   divider: {
     height: 1,

@@ -1,3 +1,5 @@
+// src/screens/Auth/SignInScreen.tsx
+
 import React, { useState } from "react";
 import {
   View,
@@ -14,10 +16,33 @@ import { RootStackParamList } from "../../navigation/RootNavigator";
 import colors from "../../lib/colors";
 import { signInWithEmail } from "../../services/supabaseClient";
 import { clearEncryptionSecret } from "../../lib/authSecret"; // For logout in future
-import { downloadAndRestoreBackup, clearCloudBackup } from "../../services/cloudSync";
+import {
+  downloadAndRestoreBackup,
+  clearCloudBackup,
+} from "../../services/cloudSync";
 import { saveEncryptionSecret } from "../../lib/authSecret";
+import { getDb } from "../../services/db";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SignIn">;
+
+// Check whether this device already has any local data
+async function hasAnyLocalData(): Promise<boolean> {
+  try {
+    const db = await getDb();
+
+    const tx = await db.getFirstAsync<{ c: number }>(
+      "SELECT COUNT(*) as c FROM transactions;"
+    );
+    const bud = await db.getFirstAsync<{ c: number }>(
+      "SELECT COUNT(*) as c FROM budgets;"
+    );
+
+    return (tx?.c ?? 0) > 0 || (bud?.c ?? 0) > 0;
+  } catch (e) {
+    console.warn("[Auth] Failed to check local data, assuming empty", e);
+    return false;
+  }
+}
 
 const SignInScreen: React.FC<Props> = ({ navigation }) => {
   const [email, setEmail] = useState("");
@@ -37,7 +62,7 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
     setErrorMessage(null);
 
     if (!trimmedEmail || !password) {
-      setErrorMessage('Please enter both email and password.');
+      setErrorMessage("Please enter both email and password.");
       return;
     }
 
@@ -46,42 +71,50 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
 
       const user = await signInWithEmail(trimmedEmail, password);
       if (!user) {
-        throw new Error('Sign-in failed. Please check your credentials.');
+        throw new Error("Sign-in failed. Please check your credentials.");
       }
 
       // Save encryption secret (password) locally
       await saveEncryptionSecret(password);
 
-      // Try to restore backup using stored secret
-      try {
-        await downloadAndRestoreBackup();
-        console.log('[Auth] Cloud restore complete');
-        Alert.alert('Synced', 'Your data has been restored from the cloud.');
-      } catch (restoreErr: any) {
-        console.warn(
-          '[Auth] Cloud restore failed or no backup:',
-          restoreErr?.message
-        );
-        // Optional: wipe old backup if decrypt failed due to password reset
+      // Check if this device already has local data
+      const hasData = await hasAnyLocalData();
+
+      if (!hasData) {
+        // Fresh device / wiped DB → restore from cloud if available
         try {
-          await clearCloudBackup();
-        } catch (wipeErr) {
-          console.warn('[Auth] Failed to wipe cloud backup:', wipeErr);
+          await downloadAndRestoreBackup();
+          console.log("[Auth] Cloud restore complete");
+          Alert.alert("Synced", "Your data has been restored from the cloud.");
+        } catch (restoreErr: any) {
+          console.warn(
+            "[Auth] Cloud restore failed or no backup:",
+            restoreErr?.message
+          );
+          // Optional: wipe old backup if decrypt failed due to password reset
+          try {
+            await clearCloudBackup();
+          } catch (wipeErr) {
+            console.warn("[Auth] Failed to wipe cloud backup:", wipeErr);
+          }
         }
+      } else {
+        console.log(
+          "[Auth] Local DB already has data, skipping cloud restore on sign-in."
+        );
       }
 
       navigation.reset({
         index: 0,
-        routes: [{ name: 'AppTabs' }],
+        routes: [{ name: "AppTabs" }],
       });
     } catch (err: any) {
-      console.error('SignIn error', err);
-      setErrorMessage(err?.message ?? 'Failed to sign in. Please try again.');
+      console.error("SignIn error", err);
+      setErrorMessage(err?.message ?? "Failed to sign in. Please try again.");
     } finally {
       setSubmitting(false);
     }
   };
-
 
   const goToSignUp = () => {
     navigation.navigate("SignUp");

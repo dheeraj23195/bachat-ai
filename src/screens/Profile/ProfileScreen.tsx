@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+// src/screens/Profile/ProfileScreen.tsx
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -6,22 +7,217 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
+  Alert,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import colors from "../../lib/colors";
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation } from "@react-navigation/native";
+import { supabase, getCurrentUser } from "../../services/supabaseClient";
+import { getDb } from "../../services/db";
+import { CurrencyCode } from "../../lib/types";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as ImagePicker from "expo-image-picker";
 
+const USER_SETTINGS_ID = "default";
+const AVATAR_STORAGE_KEY = "bachat:user_avatar_uri";
 
 const ProfileScreen: React.FC = () => {
-  const [name, setName] = useState("Adarsh Bhatt");
-  const [email, setEmail] = useState("you@example.com");
-  const [currency, setCurrency] = useState("INR");
-  const [theme, setTheme] = useState("light");
   const navigation = useNavigation();
+
+  const [name, setName] = useState<string>("");
+  const [email, setEmail] = useState<string>("");
+  const [currency, setCurrency] = useState<CurrencyCode>("INR");
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [saving, setSaving] = useState<boolean>(false);
+
   const handleBack = () => navigation.goBack();
-  const handleSave = () => {
-    // later: save profile to local storage / encryption
-    console.log({ name, email, currency, theme });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        // Load Supabase user
+        const user = await getCurrentUser();
+        if (user) {
+          const metaName =
+            (user.user_metadata as any)?.full_name as string | undefined;
+          setName(metaName || "");
+          setEmail(user.email ?? "");
+        }
+
+        // Load avatar from local storage
+        let storedAvatar = await AsyncStorage.getItem(AVATAR_STORAGE_KEY);
+        if (!storedAvatar) {
+          // Fallback: try user_settings.avatar_base64 (e.g. on a freshly restored device)
+          const db = await getDb();
+          const us = await db.getFirstAsync<{ avatar_base64?: string }>(
+            "SELECT avatar_base64 FROM user_settings WHERE id = ?",
+            USER_SETTINGS_ID
+          );
+          if (us?.avatar_base64) {
+            storedAvatar = `data:image/jpeg;base64,${us.avatar_base64}`;
+            // cache for next time
+            await AsyncStorage.setItem(AVATAR_STORAGE_KEY, storedAvatar);
+          }
+        }
+
+        if (storedAvatar) {
+          setAvatarUri(storedAvatar);
+        }
+
+        // Load currency from user_settings table
+        const db = await getDb();
+        const row = await db.getFirstAsync<{ currency: string }>(
+          "SELECT currency FROM user_settings WHERE id = ?",
+          USER_SETTINGS_ID
+        );
+        if (row?.currency) {
+          setCurrency(row.currency as CurrencyCode);
+        }
+      } catch (e) {
+        console.warn("[Profile] Failed to load profile data", e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handlePickAvatar = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission needed",
+          "We need access to your photos to set a profile picture."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (result.canceled) return;
+
+      const asset = result.assets[0];
+      const uri = asset?.uri;
+      if (!uri) return;
+
+      setAvatarUri(uri);
+      await AsyncStorage.setItem(AVATAR_STORAGE_KEY, uri);
+
+      // 🔽 NEW: save base64 into user_settings so it gets synced
+      if (asset.base64) {
+        try {
+          const db = await getDb();
+          const now = new Date().toISOString();
+          await db.runAsync(
+            `
+              UPDATE user_settings
+              SET avatar_base64 = ?, updated_at = ?
+              WHERE id = ?;
+            `,
+            asset.base64,
+            now,
+            USER_SETTINGS_ID
+          );
+        } catch (e) {
+          console.warn("[Profile] Failed to persist avatar_base64", e);
+        }
+      }
+    } catch (e) {
+      console.warn("[Profile] Avatar pick failed", e);
+      Alert.alert("Error", "Something went wrong while picking image.");
+    }
+  };
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      // Update Supabase user
+      const user = await getCurrentUser();
+      if (!user) {
+        throw new Error("No logged-in user found.");
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        email: email || undefined,
+        data: {
+          full_name: name || undefined,
+        },
+      });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      // Upsert user_settings currency in SQLite
+      const db = await getDb();
+      const existing = await db.getFirstAsync<any>(
+        "SELECT * FROM user_settings WHERE id = ?",
+        USER_SETTINGS_ID
+      );
+      const now = new Date().toISOString();
+
+      if (existing) {
+        await db.runAsync(
+          `
+            UPDATE user_settings
+            SET currency = ?, updated_at = ?
+            WHERE id = ?;
+          `,
+          currency,
+          now,
+          USER_SETTINGS_ID
+        );
+      } else {
+        // Insert with sensible defaults for other required columns
+        await db.runAsync(
+          `
+            INSERT INTO user_settings (
+              id,
+              currency,
+              theme,
+              pin_enabled,
+              biometric_enabled,
+              ai_suggestions_enabled,
+              budget_alerts_enabled,
+              onboarding_completed,
+              created_at,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          `,
+          USER_SETTINGS_ID,
+          currency,
+          "system", // theme
+          1, // pin_enabled (PIN will be mandatory)
+          0, // biometric_enabled
+          1, // ai_suggestions_enabled
+          1, // budget_alerts_enabled
+          0, // onboarding_completed
+          now,
+          now
+        );
+      }
+
+      Alert.alert("Saved", "Your profile has been updated.");
+      navigation.goBack();
+    } catch (e: any) {
+      console.error("[Profile] Save failed", e);
+      Alert.alert(
+        "Save failed",
+        e?.message ?? "Something went wrong while saving your profile."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -42,12 +238,24 @@ const ProfileScreen: React.FC = () => {
 
         {/* Avatar */}
         <View style={styles.avatarWrapper}>
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {name ? name.charAt(0).toUpperCase() : "A"}
-            </Text>
-          </View>
-          <Text style={styles.avatarLabel}>Tap to change (coming soon)</Text>
+          <TouchableOpacity
+            style={styles.avatarCircle}
+            activeOpacity={0.85}
+            onPress={handlePickAvatar}
+          >
+            {avatarUri ? (
+              <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>
+                {name
+                  ? name.trim().charAt(0).toUpperCase()
+                  : email
+                  ? email.trim().charAt(0).toUpperCase()
+                  : "B"}
+              </Text>
+            )}
+          </TouchableOpacity>
+          <Text style={styles.avatarLabel}>Tap to change photo</Text>
         </View>
 
         {/* Basic details card */}
@@ -61,6 +269,7 @@ const ProfileScreen: React.FC = () => {
             onChangeText={setName}
             placeholder="Your name"
             placeholderTextColor={colors.placeholder}
+            autoCapitalize="words"
           />
 
           <Text style={styles.label}>Email</Text>
@@ -71,6 +280,8 @@ const ProfileScreen: React.FC = () => {
             placeholder="Email"
             placeholderTextColor={colors.placeholder}
             keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
           />
         </View>
 
@@ -95,24 +306,15 @@ const ProfileScreen: React.FC = () => {
               selected={currency === "EUR"}
               onPress={() => setCurrency("EUR")}
             />
-          </View>
-
-          <Text style={styles.label}>Theme</Text>
-          <View style={styles.pillRow}>
             <Pill
-              label="Light"
-              selected={theme === "light"}
-              onPress={() => setTheme("light")}
+              label="GBP"
+              selected={currency === "GBP"}
+              onPress={() => setCurrency("GBP")}
             />
             <Pill
-              label="Dark"
-              selected={theme === "dark"}
-              onPress={() => setTheme("dark")}
-            />
-            <Pill
-              label="System"
-              selected={theme === "system"}
-              onPress={() => setTheme("system")}
+              label="Other"
+              selected={currency === "OTHER"}
+              onPress={() => setCurrency("OTHER")}
             />
           </View>
         </View>
@@ -122,8 +324,11 @@ const ProfileScreen: React.FC = () => {
           style={styles.saveButton}
           activeOpacity={0.85}
           onPress={handleSave}
+          disabled={saving || loading}
         >
-          <Text style={styles.saveButtonText}>Save Changes</Text>
+          <Text style={styles.saveButtonText}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -194,6 +399,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 40,
   },
   avatarText: {
     fontSize: 32,

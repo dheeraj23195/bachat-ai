@@ -16,6 +16,8 @@ import EditBudgetCategoryScreen from '../screens/Budget/EditBudgetCategoryScreen
 import TransactionsListScreen from '../screens/Transactions/TransactionsListScreen';
 import EditExpenseScreen from '../screens/Add/EditExpenseScreen';
 import CategoryManagementScreen from '../screens/Categories/CategoryManagementScreen';
+import AboutScreen from "../screens/About/AboutScreen";
+
 
 export type RootStackParamList = {
   AppTabs: undefined;
@@ -31,6 +33,7 @@ export type RootStackParamList = {
   Profile: undefined;
   Chatbot: undefined;
   AddBudget: undefined;
+  About: undefined;
   TransactionsList: {
     categoryId: string | null;
     title: string;
@@ -93,6 +96,7 @@ const RootNavigator: React.FC = () => {
       />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Chatbot" component={ChatbotScreen} />
+      <Stack.Screen name="About" component={AboutScreen} />
     </Stack.Navigator>
   );
 };

@@ -1,8 +1,8 @@
 // src/services/db.ts
 
-import * as SQLite from 'expo-sqlite';
+import * as SQLite from "expo-sqlite";
 
-const DB_NAME = 'bachat_ai.db';
+const DB_NAME = "bachat_ai.db";
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 
@@ -36,12 +36,12 @@ export async function resetDatabase(): Promise<void> {
   const db = await getDb();
 
   // Drop tables if they exist
-  await db.execAsync('DROP TABLE IF EXISTS ai_training_examples;');
-  await db.execAsync('DROP TABLE IF EXISTS alert_rules;');
-  await db.execAsync('DROP TABLE IF EXISTS user_settings;');
-  await db.execAsync('DROP TABLE IF EXISTS categories;');
-  await db.execAsync('DROP TABLE IF EXISTS budgets;');
-  await db.execAsync('DROP TABLE IF EXISTS transactions;');
+  await db.execAsync("DROP TABLE IF EXISTS ai_training_examples;");
+  await db.execAsync("DROP TABLE IF EXISTS alert_rules;");
+  await db.execAsync("DROP TABLE IF EXISTS user_settings;");
+  await db.execAsync("DROP TABLE IF EXISTS categories;");
+  await db.execAsync("DROP TABLE IF EXISTS budgets;");
+  await db.execAsync("DROP TABLE IF EXISTS transactions;");
 
   // Reset user_version and re-run migrations
   await setUserVersion(db, 0);
@@ -162,6 +162,12 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_budgets_category ON budgets(category_id);`
     );
   },
+
+  async (db) => {
+    await db.execAsync(
+      `ALTER TABLE user_settings ADD COLUMN avatar_base64 TEXT;`
+    );
+  },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -170,7 +176,7 @@ const MIGRATIONS: Migration[] = [
 
 async function getUserVersion(db: SQLite.SQLiteDatabase): Promise<number> {
   const row = await db.getFirstAsync<{ user_version: number }>(
-    'PRAGMA user_version'
+    "PRAGMA user_version"
   );
   return row?.user_version ?? 0;
 }

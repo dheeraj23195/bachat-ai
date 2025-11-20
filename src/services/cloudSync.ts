@@ -179,9 +179,10 @@ async function restoreLocalDatabaseFromJson(json: string): Promise<void> {
             ai_suggestions_enabled,
             budget_alerts_enabled,
             onboarding_completed,
+            avatar_base64,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         `,
         row.id,
         row.currency,
@@ -191,6 +192,7 @@ async function restoreLocalDatabaseFromJson(json: string): Promise<void> {
         row.ai_suggestions_enabled ?? 1,
         row.budget_alerts_enabled ?? 1,
         row.onboarding_completed ?? 0,
+        row.avatar_base64 ?? null,
         row.created_at,
         row.updated_at
       );
