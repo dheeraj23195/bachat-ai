@@ -1,15 +1,33 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { AppTabParamList } from '../../navigation/AppTabs';
 import colors from '../../lib/colors';
+
+import { useTransactionsStore } from '../../store/useTransactionsStore';
+import { expandRecurringTransactionsForRange } from '../../services/transactions';
+import { listCategories } from '../../services/categories';
+import { Category } from '../../lib/types';
+import { generateInsights, InsightsResult } from '../../services/insightsEngine';
+
+import {
+  startOfMonth,
+  endOfMonth,
+  subMonths,
+  subDays,
+  parseISO,
+  format,
+} from 'date-fns';
+
+import Svg, { Polyline, Circle, Line } from 'react-native-svg';
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Insights'>;
 
@@ -83,8 +101,242 @@ const SegmentButton: React.FC<SegmentButtonProps> = ({
   );
 };
 
-/** Spending Trends tab */
+/* -------------------------------------------------------------------------- */
+/*                            Mini Line Chart (6 mo)                          */
+/* -------------------------------------------------------------------------- */
+
+type MiniLineChartProps = {
+  values: number[];
+  labels: string[];
+};
+
+const MiniLineChart: React.FC<MiniLineChartProps> = ({ values, labels }) => {
+  const [width, setWidth] = useState(0);
+  const height = 160;
+
+  if (values.length === 0) {
+    return (
+      <View style={styles.chartPlaceholder}>
+        <Text style={styles.chartPlaceholderText}>Not enough data yet</Text>
+      </View>
+    );
+  }
+
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max === min ? max || 1 : max - min;
+  const padding = 20;
+
+  const points = values.map((v, idx) => {
+    const x =
+      padding +
+      (idx / Math.max(values.length - 1, 1)) * Math.max(width - padding * 2, 1);
+    const normalized = max === min ? 0.5 : (v - min) / range;
+    const y = padding + (1 - normalized) * (height - padding * 2);
+    return { x, y };
+  });
+
+  const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(' ');
+
+  return (
+    <View
+      style={styles.chartContainer}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    >
+      {width > 0 && (
+        <>
+          <Svg width={width} height={height}>
+            {/* Grid lines */}
+            <Line
+              x1={padding}
+              y1={padding}
+              x2={padding}
+              y2={height - padding}
+              stroke="#E5E7EB"
+              strokeWidth={1}
+            />
+            <Line
+              x1={padding}
+              y1={height - padding}
+              x2={width - padding}
+              y2={height - padding}
+              stroke="#E5E7EB"
+              strokeWidth={1}
+            />
+            {/* Mid grid */}
+            <Line
+              x1={padding}
+              y1={(height - padding) / 2}
+              x2={width - padding}
+              y2={(height - padding) / 2}
+              stroke="#F3F4F6"
+              strokeWidth={1}
+            />
+
+            {/* Line */}
+            <Polyline
+              points={polylinePoints}
+              fill="none"
+              stroke={colors.primary}
+              strokeWidth={2.5}
+            />
+
+            {/* Dots */}
+            {points.map((p, idx) => (
+              <Circle
+                key={idx}
+                cx={p.x}
+                cy={p.y}
+                r={4}
+                stroke={colors.primary}
+                strokeWidth={2}
+                fill={colors.background}
+              />
+            ))}
+          </Svg>
+
+          {/* Month labels */}
+          <View style={styles.chartLabelsRow}>
+            {labels.map((label, idx) => (
+              <Text key={label + idx} style={styles.chartLabel}>
+                {label}
+              </Text>
+            ))}
+          </View>
+        </>
+      )}
+    </View>
+  );
+};
+
+/* -------------------------------------------------------------------------- */
+/*                           Spending Trends tab                               */
+/* -------------------------------------------------------------------------- */
+
 const TrendsView: React.FC = () => {
+  const transactions = useTransactionsStore((s) => s.transactions);
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  // Load categories once
+  useEffect(() => {
+    (async () => {
+      try {
+        const cats = await listCategories();
+        setCategories(cats);
+      } catch (e) {
+        console.warn('[Insights] Failed to load categories', e);
+      }
+    })();
+  }, []);
+
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, Category>();
+    categories.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [categories]);
+
+  const now = new Date();
+
+  // ----- 6-month trend -----
+  const sixMonthData = useMemo(() => {
+    const start = startOfMonth(subMonths(now, 5)); // include current month
+    const end = endOfMonth(now);
+
+    const expanded = expandRecurringTransactionsForRange(
+      transactions,
+      start,
+      end
+    ).filter((tx) => tx.type === 'expense');
+
+    const months: { label: string; total: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const mStart = startOfMonth(subMonths(now, i));
+      const mEnd = endOfMonth(subMonths(now, i));
+      const label = format(mStart, 'MMM');
+
+      const total = expanded
+        .filter((tx) => {
+          const d = parseISO(tx.date);
+          return d >= mStart && d <= mEnd;
+        })
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+      months.push({ label, total });
+    }
+
+    const totals = months.map((m) => m.total);
+    const nonZeroTotals = totals.filter((v) => v > 0);
+    const avg =
+      nonZeroTotals.length > 0
+        ? nonZeroTotals.reduce((s, v) => s + v, 0) / nonZeroTotals.length
+        : 0;
+
+    const highest = Math.max(...totals, 0);
+    const lowest = Math.min(...nonZeroTotals, highest || 0);
+
+    let statusLabel = 'Stable';
+    let statusColor = '#16A34A'; // green
+    if (totals.length >= 2) {
+      const latest = totals[totals.length - 1];
+      const prev = totals[totals.length - 2] || 0;
+      if (prev > 0) {
+        const change = (latest - prev) / prev;
+        if (change > 0.1) {
+          statusLabel = 'Rising';
+          statusColor = '#EF4444';
+        } else if (change < -0.1) {
+          statusLabel = 'Decreasing';
+          statusColor = '#22C55E';
+        }
+      }
+    }
+
+    return {
+      months,
+      totals,
+      avg,
+      highest,
+      lowest,
+      statusLabel,
+      statusColor,
+    };
+  }, [transactions, now]);
+
+  // ----- Top categories (last 30 days) -----
+  const topCategories = useMemo(() => {
+    const start = subDays(now, 29);
+    const end = now;
+
+    const expanded = expandRecurringTransactionsForRange(
+      transactions,
+      start,
+      end
+    ).filter((tx) => tx.type === 'expense');
+
+    const byCat: Record<string, number> = {};
+
+    expanded.forEach((tx) => {
+      const key = tx.categoryId ?? 'uncategorized';
+      byCat[key] = (byCat[key] ?? 0) + tx.amount;
+    });
+
+    const items = Object.keys(byCat).map((id) => {
+      const cat = id === 'uncategorized' ? null : categoryMap.get(id) ?? null;
+      return {
+        id,
+        name: cat?.name ?? 'Uncategorized',
+        color: cat?.colorHex ?? '#E5E7EB',
+        total: byCat[id],
+      };
+    });
+
+    items.sort((a, b) => b.total - a.total);
+
+    return items.slice(0, 4);
+  }, [transactions, now, categoryMap]);
+
+  const hasTrendData = sixMonthData.totals.some((v) => v > 0);
+
   return (
     <View>
       {/* Monthly trend card */}
@@ -94,25 +346,49 @@ const TrendsView: React.FC = () => {
             <Text style={styles.cardTitle}>Monthly Spending Trend</Text>
             <Text style={styles.cardSubtitle}>Last 6 months overview</Text>
           </View>
-          <View style={styles.pill}>
-            <Text style={styles.pillText}>Stable</Text>
+          <View
+            style={[
+              styles.pill,
+              { backgroundColor: '#DCFCE7' },
+            ]}
+          >
+            <Text
+              style={[
+                styles.pillText,
+                { color: sixMonthData.statusColor },
+              ]}
+            >
+              {sixMonthData.statusLabel}
+            </Text>
           </View>
         </View>
 
-        {/* Line chart placeholder */}
-        <View style={styles.chartPlaceholder}>
-          <Text style={styles.chartPlaceholderText}>Line Chart</Text>
-        </View>
+        {hasTrendData ? (
+          <MiniLineChart
+            values={sixMonthData.totals}
+            labels={sixMonthData.months.map((m) => m.label)}
+          />
+        ) : (
+          <View style={styles.chartPlaceholder}>
+            <Text style={styles.chartPlaceholderText}>
+              Add a few expenses to see your trend.
+            </Text>
+          </View>
+        )}
 
         {/* Summary row */}
         <View style={styles.cardSummaryRow}>
           <View style={styles.cardSummaryItem}>
             <Text style={styles.summaryLabel}>Avg monthly spend</Text>
-            <Text style={styles.summaryValue}>₹12,400</Text>
+            <Text style={styles.summaryValue}>
+              ₹{Math.round(sixMonthData.avg).toLocaleString()}
+            </Text>
           </View>
           <View style={styles.cardSummaryItem}>
             <Text style={styles.summaryLabel}>Highest month</Text>
-            <Text style={styles.summaryValue}>₹15,800</Text>
+            <Text style={styles.summaryValue}>
+              ₹{Math.round(sixMonthData.highest).toLocaleString()}
+            </Text>
           </View>
         </View>
       </View>
@@ -126,33 +402,25 @@ const TrendsView: React.FC = () => {
           </View>
         </View>
 
-        <TrendCategoryRow
-          color="#F97316"
-          label="Food & Dining"
-          amount="₹4,500"
-          change="+12%"
-        />
-        <TrendCategoryRow
-          color="#6366F1"
-          label="Transport"
-          amount="₹2,100"
-          change="-4%"
-        />
-        <TrendCategoryRow
-          color="#EC4899"
-          label="Shopping"
-          amount="₹3,200"
-          change="+8%"
-        />
-        <TrendCategoryRow
-          color="#22C55E"
-          label="Bills & Utilities"
-          amount="₹1,800"
-          change="+2%"
-        />
+        {topCategories.length === 0 ? (
+          <Text style={styles.bodyText}>
+            No expenses in the last 30 days yet.
+          </Text>
+        ) : (
+          topCategories.map((cat) => (
+            <TrendCategoryRow
+              key={cat.id}
+              color={cat.color}
+              label={cat.name}
+              amount={`₹${cat.total.toLocaleString()}`}
+              // Trend percentage is not computed yet; show placeholder "—"
+              change="—"
+            />
+          ))
+        )}
       </View>
 
-      {/* Daily pattern card */}
+      {/* Daily pattern card (still placeholder for now) */}
       <View style={styles.card}>
         <View style={styles.cardHeaderRow}>
           <View>
@@ -166,9 +434,8 @@ const TrendsView: React.FC = () => {
         </View>
 
         <Text style={styles.bodyText}>
-          Most of your spending happens on{' '}
-          <Text style={styles.highlightText}>weekends</Text>, especially{' '}
-          <Text style={styles.highlightText}>Friday evenings</Text>.
+          Once you have more data, we&apos;ll show which days and times you
+          usually spend the most.
         </Text>
       </View>
     </View>
@@ -198,21 +465,91 @@ const TrendCategoryRow: React.FC<TrendCategoryRowProps> = ({
       </View>
       <View style={styles.trendRight}>
         <Text style={styles.trendAmount}>{amount}</Text>
-        <Text
-          style={[
-            styles.trendChange,
-            { color: isNegative ? '#16A34A' : '#EF4444' },
-          ]}
-        >
-          {change}
-        </Text>
+        {change !== '—' && (
+          <Text
+            style={[
+              styles.trendChange,
+              { color: isNegative ? '#16A34A' : '#EF4444' },
+            ]}
+          >
+            {change}
+          </Text>
+        )}
       </View>
     </View>
   );
 };
 
-/** AI Insights tab */
+/* -------------------------------------------------------------------------- */
+/*                               AI Insights tab                              */
+/* -------------------------------------------------------------------------- */
+
 const AIInsightsView: React.FC = () => {
+  const [insights, setInsights] = useState<InsightsResult | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const transactions = useTransactionsStore((s) => s.transactions);
+
+  const hasRecentTransactions = React.useMemo(() => {
+    const now = new Date();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(now.getDate() - 30);
+  
+    return transactions.some(tx => {
+      const date = new Date(tx.date);
+      return date >= thirtyDaysAgo;
+    });
+  }, [transactions]);
+  
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const result = await generateInsights();
+        if (mounted) setInsights(result);
+      } catch (e) {
+        console.warn('[AIInsights] Failed to load insights', e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (!hasRecentTransactions) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>AI Insights</Text>
+        <Text style={styles.bodyText}>
+          No AI insights yet. Add some transactions and check back after a few days.
+        </Text>
+      </View>
+    );
+  }
+  
+  if (loading) {
+    return (
+      <View style={styles.card}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+  if (!insights) return null;
+
+  const change = insights.overview.percentageChange;
+  const changeLabel = change >= 0 ? 'up' : 'down';
+  const changeAbs = Math.abs(change).toFixed(1);
+
+  const topDrivers =
+    insights.overview.topCategories.length > 0
+      ? insights.overview.topCategories.map((c) => c.name).join(' and ')
+      : 'your usual categories';
+
+  const hasOverrun = insights.predictions.categoryOverruns.length > 0;
+  const firstOverrun = insights.predictions.categoryOverruns[0];
+
   return (
     <View>
       {/* AI Overview card */}
@@ -249,11 +586,12 @@ const AIInsightsView: React.FC = () => {
             <Text style={styles.aiBulletIcon}>📈</Text>
           </View>
           <View style={styles.aiInsightTextContainer}>
-            <Text style={styles.aiInsightTitle}>Spending up by 8%</Text>
+            <Text style={styles.aiInsightTitle}>
+              Spending {changeLabel} by {changeAbs}%
+            </Text>
             <Text style={styles.aiInsightBody}>
               You&apos;re spending slightly more than last month, mainly driven
-              by <Text style={styles.highlightText}>Food & Dining</Text> and{' '}
-              <Text style={styles.highlightText}>Shopping</Text>.
+              by <Text style={styles.highlightText}>{topDrivers}</Text>.
             </Text>
           </View>
         </View>
@@ -265,10 +603,24 @@ const AIInsightsView: React.FC = () => {
           <View style={styles.aiInsightTextContainer}>
             <Text style={styles.aiInsightTitle}>Potential savings</Text>
             <Text style={styles.aiInsightBody}>
-              If you cap eating out to{' '}
-              <Text style={styles.highlightText}>₹3,500</Text>, you could save
-              an extra <Text style={styles.highlightText}>₹1,000</Text> this
-              month.
+              {hasOverrun ? (
+                <>
+                  If you reduce{' '}
+                  <Text style={styles.highlightText}>
+                    {firstOverrun.categoryName}
+                  </Text>{' '}
+                  spending by about{' '}
+                  <Text style={styles.highlightText}>
+                    ₹{Math.round(firstOverrun.excessAmount).toLocaleString()}
+                  </Text>
+                  , you can stay within your budget this month.
+                </>
+              ) : (
+                <>
+                  You&apos;re currently on track. Keeping 1–2 low-spend days each
+                  week could help you save even more.
+                </>
+              )}
             </Text>
           </View>
         </View>
@@ -280,7 +632,10 @@ const AIInsightsView: React.FC = () => {
           <View style={styles.aiInsightTextContainer}>
             <Text style={styles.aiInsightTitle}>Recurring expenses</Text>
             <Text style={styles.aiInsightBody}>
-              You have <Text style={styles.highlightText}>3 active</Text>{' '}
+              You have{' '}
+              <Text style={styles.highlightText}>
+                {insights.diagnostics.recurringSubscriptions.length} active
+              </Text>{' '}
               subscriptions. Review them once a month to avoid silent drifts in
               spending.
             </Text>
@@ -294,27 +649,40 @@ const AIInsightsView: React.FC = () => {
           <Text style={styles.cardTitle}>Smart recommendations</Text>
         </View>
 
-        <View style={styles.recoRow}>
-          <Text style={styles.recoBullet}>•</Text>
-          <Text style={styles.recoText}>
-            Set a <Text style={styles.highlightText}>weekly micro-budget</Text>{' '}
-            for Food & Dining instead of only monthly caps.
-          </Text>
-        </View>
-        <View style={styles.recoRow}>
-          <Text style={styles.recoBullet}>•</Text>
-          <Text style={styles.recoText}>
-            Turn on <Text style={styles.highlightText}>alerts</Text> when
-            you&apos;re about to cross 80% of any category budget.
-          </Text>
-        </View>
-        <View style={styles.recoRow}>
-          <Text style={styles.recoBullet}>•</Text>
-          <Text style={styles.recoText}>
-            Reserve the last <Text style={styles.highlightText}>3 days</Text> of
-            each month as a low-spend zone.
-          </Text>
-        </View>
+        {insights.recommendations.length === 0 ? (
+          <>
+            <View style={styles.recoRow}>
+              <Text style={styles.recoBullet}>•</Text>
+              <Text style={styles.recoText}>
+                Set a{' '}
+                <Text style={styles.highlightText}>weekly micro-budget</Text> for
+                your top 1–2 categories instead of relying only on a monthly cap.
+              </Text>
+            </View>
+            <View style={styles.recoRow}>
+              <Text style={styles.recoBullet}>•</Text>
+              <Text style={styles.recoText}>
+                Turn on <Text style={styles.highlightText}>alerts</Text> when
+                you&apos;re about to cross 80% of any category budget.
+              </Text>
+            </View>
+            <View style={styles.recoRow}>
+              <Text style={styles.recoBullet}>•</Text>
+              <Text style={styles.recoText}>
+                Reserve the last{' '}
+                <Text style={styles.highlightText}>3 days</Text> of each month as
+                a low-spend zone.
+              </Text>
+            </View>
+          </>
+        ) : (
+          insights.recommendations.map((rec, idx) => (
+            <View key={idx} style={styles.recoRow}>
+              <Text style={styles.recoBullet}>•</Text>
+              <Text style={styles.recoText}>{rec}</Text>
+            </View>
+          ))
+        )}
       </View>
     </View>
   );
@@ -412,13 +780,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: '#DCFCE7',
     marginLeft: 'auto',
   },
   pillText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#16A34A',
+  },
+  chartContainer: {
+    height: 180,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'stretch',
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 4,
+    overflow: 'hidden',
   },
   chartPlaceholder: {
     height: 180,
@@ -444,9 +822,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
   },
+  chartLabelsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  chartLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
   cardSummaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 4,
   },
   cardSummaryItem: {
     flex: 1,

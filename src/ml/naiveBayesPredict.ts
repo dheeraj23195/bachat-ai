@@ -1,6 +1,9 @@
 // src/ml/naiveBayesPredict.ts
 import { tokenize } from "./tokenizer";
 import { queryAsync, getVocabSize } from "./db";
+import "react-native-get-random-values";
+import { v4 as uuidv4 } from "uuid";
+
 
 export type NBResult = {
   label: string | null;
