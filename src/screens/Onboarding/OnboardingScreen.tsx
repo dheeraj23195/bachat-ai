@@ -15,6 +15,7 @@ import colors from "../../lib/colors";
 import { useNavigation } from "@react-navigation/native";
 import { setPin as setStoredPin } from "../../lib/pin";
 import { setBiometricEnabled as setBiometricEnabledDB } from "../../lib/biometric";
+import { authenticateBiometric } from "../../lib/biometric";
 import { getDb } from "../../services/db";
 import { v4 as uuidv4 } from "uuid";
 
@@ -39,18 +40,23 @@ const BASE_CATEGORIES: Category[] = [
 async function saveOnboardingCategories(
   selectedCategoryIds: string[],
   categories: Category[],
-  customCategoryName: string
+  customCategoryNames: string[]
 ) {
   const db = await getDb();
   const now = new Date().toISOString();
 
   const selected = categories.filter((c) => selectedCategoryIds.includes(c.id));
 
-  const trimmedCustom = customCategoryName.trim();
-  if (trimmedCustom.length > 0) {
+  // Add all non-empty custom categories
+  const trimmedCustoms = customCategoryNames
+  .map((name: string) => name.trim())
+  .filter((name: string) => name.length > 0);
+
+
+  for (const name of trimmedCustoms) {
     selected.push({
       id: uuidv4(),
-      name: trimmedCustom,
+      name,
       emoji: "🏷️",
       color: "#64748B",
     });
@@ -166,8 +172,8 @@ const OnboardingScreen: React.FC = () => {
     "entertainment",
   ]);
 
-  const [showCustomInput, setShowCustomInput] = useState(false);
-  const [customCategoryName, setCustomCategoryName] = useState("");
+  const [customCategories, setCustomCategories] = useState<string[]>([""]);
+
 
   const [budgetsByCategoryId, setBudgetsByCategoryId] = useState<
     Record<string, string>
@@ -200,7 +206,7 @@ const OnboardingScreen: React.FC = () => {
         await saveOnboardingCategories(
           selectedCategoryIds,
           categories,
-          customCategoryName
+          customCategories
         );
         await saveOnboardingBudgets(
           budgetsByCategoryId,
@@ -243,6 +249,18 @@ const OnboardingScreen: React.FC = () => {
   const selectedCategories = categories.filter((c) =>
     selectedCategoryIds.includes(c.id)
   );
+  const mergedSelectedCategories: Category[] = [
+    ...selectedCategories,
+    ...customCategories
+      .map((name: string) => name.trim())
+      .filter((name: string) => name.length > 0)
+      .map((name: string) => ({
+        id: uuidv4(),
+        name,
+        emoji: "🏷️",
+        color: "#64748B",
+      })),
+  ];
 
   const renderProgressBar = () => {
     return (
@@ -347,7 +365,11 @@ const OnboardingScreen: React.FC = () => {
           </View>
           <Switch
             value={biometricEnabled}
-            onValueChange={setBiometricEnabled}
+            onValueChange={(value) => {
+              // Just store preference during onboarding.
+              // Actual biometric popup will happen on the LockScreen.
+              setBiometricEnabled(value);
+            }}
             trackColor={{ false: "#E5E7EB", true: "#BFDBFE" }}
             thumbColor={biometricEnabled ? colors.primary : "#FFFFFF"}
           />
@@ -436,23 +458,29 @@ const OnboardingScreen: React.FC = () => {
       <TouchableOpacity
         style={styles.customCategoryButton}
         activeOpacity={0.9}
-        onPress={() => setShowCustomInput((prev) => !prev)}
+        onPress={() => setCustomCategories(prev => [...prev, ""])}
       >
         <Text style={styles.customCategoryPlus}>＋</Text>
         <Text style={styles.customCategoryText}>Add Custom Category</Text>
       </TouchableOpacity>
 
-      {showCustomInput && (
-        <View style={styles.customCategoryInputWrapper}>
+      {customCategories.map((value, idx) => (
+        <View key={idx} style={styles.customCategoryInputWrapper}>
           <TextInput
-            value={customCategoryName}
-            onChangeText={setCustomCategoryName}
+            value={value}
+            onChangeText={(text) => {
+              setCustomCategories(prev => {
+                const arr = [...prev];
+                arr[idx] = text;
+                return arr;
+              });
+          }}
             placeholder="Custom category name"
             placeholderTextColor={colors.placeholder}
             style={styles.customCategoryInput}
           />
         </View>
-      )}
+      ))}
 
       <Text style={styles.selectedCountText}>
         {selectedCategoryIds.length} categories selected
@@ -490,13 +518,13 @@ const OnboardingScreen: React.FC = () => {
         </View>
 
         <View style={{ marginTop: 16 }}>
-          {selectedCategories.length === 0 ? (
+          {mergedSelectedCategories.length === 0 ? (
             <Text style={styles.emptyHint}>
               No categories selected. You can add budgets later in the Budget
               tab.
             </Text>
           ) : (
-            selectedCategories.map((cat) => (
+            mergedSelectedCategories.map((cat: Category) => (
               <View key={cat.id} style={styles.budgetCard}>
                 <View style={styles.budgetHeaderRow}>
                   <View
@@ -522,6 +550,7 @@ const OnboardingScreen: React.FC = () => {
             ))
           )}
         </View>
+
 
         <View style={styles.tipCard}>
           <Text style={styles.tipEmoji}>💡</Text>

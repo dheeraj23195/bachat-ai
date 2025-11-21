@@ -9,7 +9,6 @@ import RootNavigator, { RootStackParamList } from './src/navigation/RootNavigato
 import { initDatabase } from './src/services/db';
 import { useTransactionsStore } from './src/store/useTransactionsStore';
 import { listTransactions } from './src/services/transactions';
-import { ensureDefaultCategories } from './src/services/categories';
 import { hasPin } from './src/lib/pin';
 
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
@@ -26,7 +25,6 @@ export default function App() {
       try {
         await initDatabase();
         await initMLTables();
-        await ensureDefaultCategories(); 
         await loadTransactions();  
         setReady(true);
       } catch (e: any) {

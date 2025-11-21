@@ -27,7 +27,7 @@ const LockScreen: React.FC = () => {
       const enabled = await getBiometricEnabled();
 
       if (supported && enabled) {
-      setBiometricVisible(true);
+        setBiometricVisible(true);
       }
   })();
   }, []);
@@ -85,6 +85,17 @@ const LockScreen: React.FC = () => {
           Unlock Bachat AI to continue
         </Text>
 
+        {/* Biometric button shown FIRST */}
+        {biometricVisible && (
+          <TouchableOpacity
+            style={styles.bioButton}
+            onPress={handleBiometricUnlock}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.bioText}>🔓 Unlock with Face ID</Text>
+          </TouchableOpacity>
+        )}
+
         {/* PIN Dots */}
         <TouchableOpacity
           style={styles.pinRow}
@@ -105,7 +116,7 @@ const LockScreen: React.FC = () => {
           })}
         </TouchableOpacity>
 
-        {/* Hidden input */}
+        {/* Hidden PIN TextInput */}
         <TextInput
           ref={pinInputRef}
           onChangeText={handlePinChange}
@@ -115,21 +126,11 @@ const LockScreen: React.FC = () => {
           autoFocus={true}
         />
 
-        {/* Error message */}
+        {/* Error */}
         {error.length > 0 && (
           <Text style={styles.errorText}>{error}</Text>
         )}
 
-        {/* Biometric unlock placeholder */}
-        {biometricVisible && (
-          <TouchableOpacity
-            style={styles.bioButton}
-            onPress={handleBiometricUnlock}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.bioText}>🔓 Unlock with Biometrics</Text>
-          </TouchableOpacity>
-        )}
       </View>
     </SafeAreaView>
   );
@@ -189,12 +190,16 @@ const styles = StyleSheet.create({
   bioButton: {
     marginTop: 24,
     alignSelf: "center",
-    opacity: 0.4,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: "#E0EAFF",
+    borderRadius: 12,
   },
   bioText: {
     fontSize: 14,
-    color: colors.textSecondary,
-  },
+    color: colors.primary,
+    fontWeight: "600",
+  }
 });
 
 export default LockScreen;

@@ -53,33 +53,6 @@ function slugifyName(name: string): string {
 
 // ---------- Public API ----------
 
-export async function ensureDefaultCategories(): Promise<void> {
-  const db = await getDb();
-  const now = new Date().toISOString();
-
-  for (const cat of DEFAULT_CATEGORIES) {
-    await db.runAsync(
-      `
-        INSERT OR IGNORE INTO categories (
-          id,
-          name,
-          icon,
-          color_hex,
-          is_default,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?);
-      `,
-      cat.id,
-      cat.name,
-      cat.icon ?? null,
-      cat.colorHex ?? null,
-      1,
-      now,
-      now
-    );
-  }
-}
 
 export async function createCategory(input: {
   id?: string;
