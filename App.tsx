@@ -1,6 +1,7 @@
 // App.tsx
 
 import React, { useEffect, useState } from 'react';
+import { initMLTables } from "./src/ml/db";
 import { ActivityIndicator, View, Text, AppState } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ export default function App() {
     (async () => {
       try {
         await initDatabase();
+        await initMLTables();
         await ensureDefaultCategories(); 
         await loadTransactions();  
         setReady(true);
