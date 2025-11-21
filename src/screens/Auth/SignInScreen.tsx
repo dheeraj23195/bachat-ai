@@ -21,6 +21,7 @@ import {
   clearCloudBackup,
 } from "../../services/cloudSync";
 import { saveEncryptionSecret } from "../../lib/authSecret";
+import { hasPin } from "../../lib/pin";
 import { getDb } from "../../services/db";
 
 type Props = NativeStackScreenProps<RootStackParamList, "SignIn">;
@@ -104,10 +105,13 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
         );
       }
 
+      const hasExistingPin = await hasPin();
+
       navigation.reset({
         index: 0,
-        routes: [{ name: "AppTabs" }],
+        routes: [{ name: hasExistingPin ? "Lock" : "AppTabs" }],
       });
+
     } catch (err: any) {
       console.error("SignIn error", err);
       setErrorMessage(err?.message ?? "Failed to sign in. Please try again.");

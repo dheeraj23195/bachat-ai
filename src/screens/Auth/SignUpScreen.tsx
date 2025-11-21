@@ -79,7 +79,7 @@ const handleSignUp = async () => {
     Alert.alert('Account created', `Welcome to Bachat AI, ${trimmedName}!`);
     navigation.reset({
       index: 0,
-      routes: [{ name: 'AppTabs' }],
+      routes: [{ name: 'Onboarding' }],
     });
   } catch (err: any) {
     console.error('SignUp error', err);

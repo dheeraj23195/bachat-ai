@@ -1,14 +1,18 @@
 // App.tsx
 
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, View, Text } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { ActivityIndicator, View, Text, AppState } from 'react-native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import RootNavigator from './src/navigation/RootNavigator';
+import RootNavigator, { RootStackParamList } from './src/navigation/RootNavigator';
 import { initDatabase } from './src/services/db';
 import { useTransactionsStore } from './src/store/useTransactionsStore';
 import { listTransactions } from './src/services/transactions';
 import { ensureDefaultCategories } from './src/services/categories';
+import { hasPin } from './src/lib/pin';
+
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -29,6 +33,34 @@ export default function App() {
       }
     })();
   }, []);
+
+    useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        // Navigator might not be ready yet on cold start
+        if (!navigationRef.isReady()) {
+          return;
+        }
+
+        (async () => {
+          const pinExists = await hasPin();
+          const currentRoute = navigationRef.getCurrentRoute()?.name;
+
+          if (pinExists && currentRoute !== 'Lock') {
+            navigationRef.reset({
+              index: 0,
+              routes: [{ name: 'Lock' }],
+            });
+          }
+        })();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
 
   if (!ready) {
     return (
@@ -51,12 +83,12 @@ export default function App() {
       </SafeAreaProvider>
     );
   }
-
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
+      <NavigationContainer ref={navigationRef}>
         <RootNavigator />
       </NavigationContainer>
     </SafeAreaProvider>
   );
 }
+

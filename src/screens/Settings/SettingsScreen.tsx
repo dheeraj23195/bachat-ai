@@ -17,7 +17,7 @@ import { wipeAllAppData } from "../../services/wipe";
 import { getCurrentUser } from "../../services/supabaseClient";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-
+import { setBiometricEnabled as setBiometricEnabledDB } from "../../lib/biometric";
 import { signOut } from "../../services/supabaseClient";
 import { clearEncryptionSecret } from "../../lib/authSecret";
 import { RootStackParamList } from "../../navigation/RootNavigator";
@@ -192,10 +192,7 @@ const SettingsScreen: React.FC<Props> = ({}) => {
   };
 
   const handleForgotPin = () => {
-    Alert.alert(
-      "Forgot PIN",
-      "In the final flow, you’ll verify using your account password and then reset your PIN. This is a placeholder for now."
-    );
+    navigation.navigate("ForgotPin");
   };
 
   const handleAboutPress = () => {
@@ -303,7 +300,10 @@ const SettingsScreen: React.FC<Props> = ({}) => {
               title="Biometric unlock"
               subtitle="Use Face ID / fingerprint to unlock Bachat AI (recommended)"
               value={biometricEnabled}
-              onValueChange={setBiometricEnabled}
+              onValueChange={async (v) => {
+                setBiometricEnabled(v);
+                await setBiometricEnabledDB(v);
+              }}
             />
           </View>
         </View>
