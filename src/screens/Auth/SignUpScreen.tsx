@@ -14,6 +14,9 @@ import { RootStackParamList } from '../../navigation/RootNavigator';
 import colors from '../../lib/colors';
 import { signUpWithEmail } from '../../services/supabaseClient';
 import { saveEncryptionSecret } from "../../lib/authSecret";
+import {
+  Lock
+} from "lucide-react-native"
 
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SignUp'>;
@@ -115,7 +118,7 @@ const handleSignUp = async () => {
       {/* Info card */}
       <View style={styles.infoCard}>
         <View style={styles.infoIconCircle}>
-          <Text style={styles.infoIcon}>🛡️</Text>
+          <Lock size={30} color="#FFFFFF" strokeWidth={2.5} />
         </View>
         <View style={styles.infoTextContainer}>
           <Text style={styles.infoTitle}>Your data is encrypted</Text>
@@ -284,7 +287,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.primarySoft,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,

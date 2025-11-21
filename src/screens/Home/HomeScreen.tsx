@@ -13,7 +13,13 @@ import { AppTabParamList } from "../../navigation/AppTabs";
 
 import colors from "../../lib/colors";
 import { useTransactionsStore } from "../../store/useTransactionsStore";
-import { startOfMonth, endOfMonth, isWithinInterval, parseISO } from "date-fns";
+import {
+  startOfMonth,
+  endOfMonth,
+  isWithinInterval,
+  parseISO,
+  format,
+} from "date-fns";
 import DonutChart, {
   DonutChartDataPoint,
 } from "../../components/DonutChart";
@@ -28,13 +34,12 @@ import { uploadEncryptedBackup } from "../../services/cloudSync";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../navigation/RootNavigator";
 
-
 import {
-  Plus, 
-  Upload, 
-  Camera, 
-  MessageCircle, 
-  TrendingDown, 
+  Plus,
+  Upload,
+  Camera,
+  MessageCircle,
+  TrendingDown,
   TrendingUp,
   Wallet,
   PiggyBank,
@@ -42,7 +47,7 @@ import {
   Coffee,
   Car,
   Home,
-  Bell
+  Bell,
 } from "lucide-react-native";
 
 type Props = BottomTabScreenProps<AppTabParamList, "Home"> & {
@@ -57,7 +62,6 @@ const SEGMENT_COLORS = [
   "#0EA5E9", // sky
   "#A855F7", // purple
 ];
-
 
 const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const handleImportPress = () => navigation.navigate("ImportTransactions");
@@ -124,8 +128,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     loadUser();
   }, []);
 
-
-
   // Expand recurring transactions for this month (same behaviour as BudgetScreen)
   const expandedMonthlyTransactions = useMemo(
     () =>
@@ -134,8 +136,7 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   );
 
   const monthlyExpenses = useMemo(
-    () =>
-      expandedMonthlyTransactions.filter((tx) => tx.type === "expense"),
+    () => expandedMonthlyTransactions.filter((tx) => tx.type === "expense"),
     [expandedMonthlyTransactions]
   );
 
@@ -150,7 +151,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
     try {
       await uploadEncryptedBackup();
-      Alert.alert("Synced", "Your data has been securely backed up to the cloud.");
+      Alert.alert(
+        "Synced",
+        "Your data has been securely backed up to the cloud."
+      );
     } catch (err: any) {
       console.error("[Settings] Manual sync failed", err);
       Alert.alert(
@@ -207,6 +211,26 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
     color: s.color,
   }));
 
+  // --- Recent Transactions (current month, newest first) ---
+  const recentTransactions = useMemo(
+    () =>
+      [...monthlyExpenses]
+        .sort(
+          (a, b) =>
+            parseISO(b.date).getTime() - parseISO(a.date).getTime()
+        )
+        .slice(0, 3),
+    [monthlyExpenses]
+  );
+
+  const handleSeeAllPress = () => {
+    navigation.navigate("TransactionsList", {
+      categoryId: null,
+      title: "All Expenses",
+      startDate: monthStart.toISOString(),
+      endDate: monthEnd.toISOString(),
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -260,7 +284,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
               </View>
             </View>
 
-
             {/* Progress bar: % of budget used */}
             <View style={styles.progressBackground}>
               <View
@@ -276,10 +299,11 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
         {/* Quick actions */}
         <View style={styles.quickActionsSection}>
           <View style={styles.quickActionsRow}>
-            <QuickActionButton 
-              label="Add" 
-              Icon={Plus} 
-              onPress={handleAddPress} />
+            <QuickActionButton
+              label="Add"
+              Icon={Plus}
+              onPress={handleAddPress}
+            />
             <QuickActionButton
               label="Import"
               Icon={Upload}
@@ -323,11 +347,85 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             )}
           </View>
         </View>
+
+        {/* Recent Transactions section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Recent Transactions</Text>
+            {monthlyExpenses.length > 0 && (
+              <TouchableOpacity
+                onPress={handleSeeAllPress}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.sectionActionText}>See all</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.card}>
+            {recentTransactions.length === 0 ? (
+              <View style={styles.emptyRecentWrapper}>
+                <Text style={styles.donutText}>
+                  No expenses recorded yet.
+                </Text>
+              </View>
+            ) : (
+              recentTransactions.map((tx) => {
+                const category = tx.categoryId
+                  ? categoryMap.get(tx.categoryId)
+                  : undefined;
+                const title =
+                  tx.encryptedNote || category?.name || "Expense";
+                const dateLabel = format(parseISO(tx.date), "dd MMM");
+
+                return (
+                  <View
+                    key={`${tx.id}_${tx.date}`}
+                    style={styles.recentRow}
+                  >
+                    <View
+                      style={[
+                        styles.recentIconCircle,
+                        {
+                          backgroundColor:
+                            category?.colorHex || "#EEF2FF",
+                        },
+                      ]}
+                    >
+                      <Text style={styles.recentIconLetter}>
+                        {(
+                          category?.name?.[0] ||
+                          title[0] ||
+                          "E"
+                        ).toUpperCase()}
+                      </Text>
+                    </View>
+
+                    <View style={styles.recentTextColumn}>
+                      <Text
+                        style={styles.recentTitle}
+                        numberOfLines={1}
+                      >
+                        {title}
+                      </Text>
+                      <Text style={styles.recentSubtitle}>
+                        {category?.name ?? "Uncategorized"} • {dateLabel}
+                      </Text>
+                    </View>
+
+                    <Text style={styles.recentAmount}>
+                      -₹{tx.amount.toLocaleString()}
+                    </Text>
+                  </View>
+                );
+              })
+            )}
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 };
-
 
 type QuickActionProps = {
   label: string;
@@ -464,7 +562,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   progressFill: {
-    width: "40%", // static for now
+    width: "40%", // dynamic override applied inline
     height: "100%",
     borderRadius: 999,
     backgroundColor: colors.primary,
@@ -491,7 +589,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   syncButtonText: {
-    color: "#ffffffff", // same blue as your card or adjust
+    color: "#ffffffff",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -522,6 +620,17 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.textPrimary,
     marginBottom: 12,
+  },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  sectionActionText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: colors.primary,
   },
   card: {
     backgroundColor: colors.surface,
@@ -593,6 +702,51 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
     color: colors.textPrimary,
+  },
+
+  // Recent transactions styles
+  recentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  recentIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  recentIconLetter: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: colors.textPrimary,
+  },
+  recentTextColumn: {
+    flex: 1,
+  },
+  recentTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: colors.textPrimary,
+  },
+  recentSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  recentAmount: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#DC2626", // red-ish for expenses
+    marginLeft: 8,
+  },
+  emptyRecentWrapper: {
+    paddingVertical: 16,
+    alignItems: "center",
   },
 });
 

@@ -21,6 +21,9 @@ import {
   clearCloudBackup,
 } from "../../services/cloudSync";
 import { saveEncryptionSecret } from "../../lib/authSecret";
+import {
+  Lock
+} from "lucide-react-native"
 import { hasPin } from "../../lib/pin";
 import { getDb } from "../../services/db";
 
@@ -152,7 +155,7 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
       {/* Info card */}
       <View style={styles.infoCard}>
         <View style={styles.infoIconCircle}>
-          <Text style={styles.infoIcon}>🔒</Text>
+          <Lock size={30} color="#FFFFFF" strokeWidth={2.5} />
         </View>
         <View style={styles.infoTextContainer}>
           <Text style={styles.infoTitle}>Secure authentication</Text>
@@ -274,7 +277,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "#DCFCE7",
+    backgroundColor: "#E9F7EE",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
