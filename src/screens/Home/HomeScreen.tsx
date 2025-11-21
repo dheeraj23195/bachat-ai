@@ -20,9 +20,6 @@ import {
   parseISO,
   format,
 } from "date-fns";
-import DonutChart, {
-  DonutChartDataPoint,
-} from "../../components/DonutChart";
 import { Category } from "../../lib/types";
 import { listCategories } from "../../services/categories";
 import { useIsFocused } from "@react-navigation/native";
@@ -205,11 +202,6 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
       };
     }
   );
-
-  const donutChartData: DonutChartDataPoint[] = chartSegments.map((s) => ({
-    value: s.value,
-    color: s.color,
-  }));
 
   // --- Recent Transactions (current month, newest first) ---
   const recentTransactions = useMemo(
