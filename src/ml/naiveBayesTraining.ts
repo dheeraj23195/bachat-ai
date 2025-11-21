@@ -9,6 +9,8 @@ import {
 } from "./db";
 
 import { v4 as uuidv4 } from "uuid";
+import "react-native-get-random-values";
+
 
 // Training example type
 export type TrainingInput = {

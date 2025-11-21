@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useCallback,
 } from "react";
 import {
   View,
@@ -22,7 +23,7 @@ import DateTimePicker, {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { BottomTabScreenProps } from "@react-navigation/bottom-tabs";
 import { useNavigation } from "@react-navigation/native";
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused } from "@react-navigation/native";
 
 import { AppTabParamList } from "../../navigation/AppTabs";
 import colors from "../../lib/colors";
@@ -34,15 +35,24 @@ import {
   Transaction,
 } from "../../lib/types";
 import { useTransactionsStore } from "../../store/useTransactionsStore";
-import { listCategories } from "../../services/categories";
+import { listCategories, ensureCategoryByName } from "../../services/categories";
 
 import { listBudgets } from "../../services/budgets";
 import { expandRecurringTransactionsForRange } from "../../services/transactions";
-import { format, startOfMonth, endOfMonth, parseISO, isWithinInterval } from "date-fns";
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  parseISO,
+  isWithinInterval,
+} from "date-fns";
 import { sendBudgetAlertNotification } from "../../services/notifications";
+import { mlService } from "../../ml/MLService";
+import { Bot } from "lucide-react-native";
 
-// After imports, before AddExpenseScreen component
-
+/**
+ * Budget alert helper (left as in original new file)
+ */
 async function checkBudgetAlertsForNewExpense(saved: Transaction) {
   try {
     // Get the latest transactions from the store
@@ -88,8 +98,7 @@ async function checkBudgetAlertsForNewExpense(saved: Transaction) {
       const usagePercent = (spentForThisBudget / b.limitAmount) * 100;
 
       if (usagePercent >= b.alertThresholdPercent) {
-        const scopeLabel =
-          b.categoryId === null ? "overall" : "category";
+        const scopeLabel = b.categoryId === null ? "overall" : "category";
 
         const title = "Budget alert";
         const body = `Your ${scopeLabel} budget is at ${usagePercent.toFixed(
@@ -108,11 +117,15 @@ async function checkBudgetAlertsForNewExpense(saved: Transaction) {
   }
 }
 
-
-
 type Props = BottomTabScreenProps<AppTabParamList, "Add">;
 
 type RecurringFrequency = "daily" | "weekly" | "monthly";
+
+/**
+ * ML thresholds
+ */
+const CONFIDENCE_THRESHOLD_SHOW = 0.25; // show suggestion UI only if confidence >= 0.25
+const AUTO_ACCEPT_THRESHOLD = 0.9; // auto-accept mapped category if super confident
 
 const AddExpenseScreen: React.FC<Props> = () => {
   // Categories from DB
@@ -124,18 +137,13 @@ const AddExpenseScreen: React.FC<Props> = () => {
   const isFocused = useIsFocused();
   const [recurringFrequency, setRecurringFrequency] =
     useState<RecurringFrequency>("monthly");
-  const [recurringWeekdays, setRecurringWeekdays] = useState<string[]>(
-    []
-  );
+  const [recurringWeekdays, setRecurringWeekdays] = useState<string[]>([]);
   const [recurringMonthDay, setRecurringMonthDay] = useState<string>("");
 
   const [amount, setAmount] = useState("");
-  const [paymentMethod, setPaymentMethod] =
-    useState<PaymentMethod>("Card");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("Card");
   const [customPaymentMethod, setCustomPaymentMethod] = useState("");
-  const [date, setDate] = useState<string>(
-    new Date().toISOString()
-  );
+  const [date, setDate] = useState<string>(new Date().toISOString());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [note, setNote] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -152,25 +160,35 @@ const AddExpenseScreen: React.FC<Props> = () => {
 
   const scrollRef = useRef<ScrollView | null>(null);
 
+  // ----- ML suggestion state -----
+  const [mlSuggestion, setMlSuggestion] = useState<{
+    category?: string;
+    confidence?: number;
+    explanation?: string;
+    rawCategoryId?: string | undefined;
+  } | null>(null);
+
+  // debounce timer
+  const predictTimerRef = useRef<number | null>(null);
+
   // ----- Load categories from DB -----
   useEffect(() => {
     if (!isFocused) return;
 
     const fetchCategories = async () => {
       try {
-        const rows = await listCategories();  // <-- Fetch categories from DB
-        setCategories(rows);  // <-- Set categories state
+        const rows = await listCategories();
+        setCategories(rows);
         if (!selectedCategoryId && rows.length > 0) {
-          setSelectedCategoryId(rows[0].id);  // Default to first category if none is selected
+          setSelectedCategoryId(rows[0].id);
         }
       } catch (error) {
-        console.error('Failed to load categories', error);
+        console.error("Failed to load categories", error);
       }
     };
 
     fetchCategories();
-  }, [isFocused]); 
-
+  }, [isFocused]);
 
   const formattedHeaderDate = useMemo(() => {
     try {
@@ -180,10 +198,79 @@ const AddExpenseScreen: React.FC<Props> = () => {
     }
   }, [date]);
 
-  const aiPrediction = {
-    label: "Food & Dining",
-    confidence: 0.86,
-    why: "Matched keywords from past similar transactions at Zomato / Swiggy",
+  /**
+   * runPredictionNow - based on old ML-integrated file
+   * Attempts to map ml result to an existing category id and optionally auto-accept
+   */
+  const runPredictionNow = useCallback(
+    async (text: string) => {
+      if (!text || text.trim().length < 2) {
+        setMlSuggestion(null);
+        return;
+      }
+
+      try {
+        const result = await mlService.predictCategory(text);
+        if (!result) {
+          setMlSuggestion(null);
+          return;
+        }
+
+        const mapped = {
+          category: result.category,
+          confidence: result.confidence ?? 0,
+          explanation: result.explanation ?? "",
+          rawCategoryId: undefined as string | undefined,
+        };
+
+        // If ML returned an id that matches, use it. Else try to match by name.
+        if (typeof result.category === "string") {
+          const byId = categories.find((c) => c.id === result.category);
+          if (byId) {
+            mapped.rawCategoryId = byId.id;
+            mapped.category = byId.name;
+          } else {
+            const byName = categories.find(
+              (c) =>
+                c.name.toLowerCase() ===
+                String(result.category).toLowerCase()
+            );
+            if (byName) {
+              mapped.rawCategoryId = byName.id;
+              mapped.category = byName.name;
+            }
+          }
+        }
+
+        setMlSuggestion(mapped);
+
+        // Auto-accept if extremely confident and mapped to existing id
+        if (mapped.rawCategoryId && (mapped.confidence ?? 0) >= AUTO_ACCEPT_THRESHOLD) {
+          setSelectedCategoryId(mapped.rawCategoryId);
+        }
+      } catch (err) {
+        console.error("Prediction failed", err);
+        setMlSuggestion(null);
+      }
+    },
+    [categories]
+  );
+
+  // Debounce wrapper
+  const schedulePrediction = (text: string) => {
+    if (predictTimerRef.current) {
+      clearTimeout(predictTimerRef.current);
+    }
+    predictTimerRef.current = (setTimeout(() => {
+      runPredictionNow(text);
+      predictTimerRef.current = null;
+    }, 300) as unknown) as number;
+  };
+
+  // Update note with debounce prediction
+  const onNoteChange = (t: string) => {
+    setNote(t);
+    schedulePrediction(t);
   };
 
   const handleDateChange = (
@@ -203,9 +290,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
 
   const toggleWeekday = (code: string) => {
     setRecurringWeekdays((prev) =>
-      prev.includes(code)
-        ? prev.filter((d) => d !== code)
-        : [...prev, code]
+      prev.includes(code) ? prev.filter((d) => d !== code) : [...prev, code]
     );
   };
 
@@ -229,9 +314,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
   };
 
   const resetForm = () => {
-    setSelectedCategoryId(
-      categories[0]?.id ?? null
-    );
+    setSelectedCategoryId(categories[0]?.id ?? null);
     setIsRecurring(false);
     setRecurringFrequency("monthly");
     setRecurringWeekdays([]);
@@ -242,25 +325,45 @@ const AddExpenseScreen: React.FC<Props> = () => {
     setDate(new Date().toISOString());
     setNote("");
     setShowDatePicker(false);
+    setMlSuggestion(null);
     scrollRef.current?.scrollTo({ y: 0, animated: true });
   };
 
+  // Save transaction and train ML after successful save
   const handleSaveExpense = async () => {
     if (isSaving) return;
 
-    const numericAmount = parseFloat(
-      amount.replace(/[^0-9.]/g, "")
-    );
+    const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ""));
     if (!numericAmount || numericAmount <= 0) {
       Alert.alert("Invalid amount", "Please enter a valid amount.");
       return;
     }
 
-    if (!selectedCategoryId) {
-      Alert.alert(
-        "Choose a category",
-        "Please select a category."
-      );
+    // Determine category to save
+    let categoryToSaveId = selectedCategoryId;
+
+    // if user didn't pick but ML has mapped id
+    if (!categoryToSaveId && mlSuggestion?.rawCategoryId) {
+      categoryToSaveId = mlSuggestion.rawCategoryId;
+    }
+
+    // if still no id but ML suggested a category name, ensure it exists and get id
+    if (!categoryToSaveId && mlSuggestion?.category) {
+      try {
+        const created = await ensureCategoryByName(
+          mlSuggestion.category || "",
+          "#9CA3AF" // default color
+        );
+        categoryToSaveId = created.id;
+        const refreshed = await listCategories();
+        setCategories(refreshed);
+      } catch (err) {
+        console.warn("Failed to ensure category by name:", err);
+      }
+    }
+
+    if (!categoryToSaveId) {
+      Alert.alert("Choose a category", "Please select a category.");
       return;
     }
 
@@ -271,9 +374,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
       metadata.customPaymentMethod = customPaymentMethod.trim();
     }
     const metadataJson =
-      Object.keys(metadata).length > 0
-        ? JSON.stringify(metadata)
-        : null;
+      Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
 
     try {
       setIsSaving(true);
@@ -283,7 +384,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
         amount: numericAmount,
         currency,
         date,
-        categoryId: selectedCategoryId,
+        categoryId: categoryToSaveId,
         paymentMethod,
         note: note || null,
         merchant: null,
@@ -299,7 +400,18 @@ const AddExpenseScreen: React.FC<Props> = () => {
       // 🔔 Check budgets and send local notifications if thresholds are crossed
       await checkBudgetAlertsForNewExpense(saved);
 
-      // Success popup
+      // Train ML after successful save (fire-and-forget; don't block UX)
+      try {
+        await mlService.trainOnTransaction({
+          id: saved.id,
+          note: note || "",
+          merchant: undefined,
+          categoryId: categoryToSaveId,
+        });
+      } catch (trainErr) {
+        console.error("ML training failed", trainErr);
+      }
+
       Alert.alert("Expense saved", "Your expense has been added.", [
         { text: "OK" },
       ]);
@@ -316,7 +428,51 @@ const AddExpenseScreen: React.FC<Props> = () => {
     }
   };
 
+  // User wants to use suggestion
+  const onUseSuggestion = async () => {
+    if (!mlSuggestion) return;
+
+    if (mlSuggestion.rawCategoryId) {
+      setSelectedCategoryId(mlSuggestion.rawCategoryId);
+      return;
+    }
+
+    // otherwise create/ensure category by name
+    try {
+      const cat = await ensureCategoryByName(
+        mlSuggestion.category || "",
+        "#9CA3AF" // default color
+      );
+      const refreshed = await listCategories();
+      setCategories(refreshed);
+      setSelectedCategoryId(cat.id);
+      setMlSuggestion((s) => (s ? { ...s, rawCategoryId: cat.id } : s));
+    } catch (err) {
+      console.warn("Failed to create/ensure category for suggestion", err);
+      Alert.alert("Category error", "Couldn't use suggested category.");
+    }
+  };
+
   const showRecurringDetails = isRecurring;
+
+  // Inline small chip component (UI)
+  const Chip: React.FC<{
+    label: string;
+    selected: boolean;
+    onPress: () => void;
+  }> = ({ label, selected, onPress }) => {
+    return (
+      <TouchableOpacity
+        style={[styles.chip, selected && styles.chipSelected]}
+        onPress={onPress}
+        activeOpacity={0.8}
+      >
+        <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -336,38 +492,62 @@ const AddExpenseScreen: React.FC<Props> = () => {
         </View>
 
         {/* AI Prediction Card */}
-        <View style={styles.aiCard}>
-          <View style={styles.aiHeaderRow}>
-            <View style={styles.aiIconCircle}>
-              <Text style={styles.aiIcon}>🤖</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.aiTitle}>AI Category Suggestion</Text>
-              <Text style={styles.aiSubtitle}>
-                Local, on-device prediction
-              </Text>
-            </View>
-            <View style={styles.aiConfidencePill}>
-              <Text style={styles.aiConfidenceText}>
-                {(aiPrediction.confidence * 100).toFixed(0)}%
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.aiBodyRow}>
-            <View>
-              <Text style={styles.aiLabel}>Suggested Category</Text>
-              <View style={styles.aiCategoryPill}>
-                <Text style={styles.aiCategoryText}>
-                  {aiPrediction.label}
-                </Text>
+        {mlSuggestion &&
+          (mlSuggestion.confidence ?? 0) >= CONFIDENCE_THRESHOLD_SHOW && (
+            <View style={styles.aiCard}>
+              {/* Top row */}
+              <View style={styles.aiHeaderRow}>
+                <View style={styles.aiIconCircle}>
+                  <Bot size={20} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiTitle}>AI Category Suggestion</Text>
+                  <Text style={styles.aiSubtitle}>
+                    Local, on-device prediction
+                  </Text>
+                </View>
+                <View style={styles.aiConfidencePill}>
+                  <Text style={styles.aiConfidenceLabel}>Confidence</Text>
+                  <Text style={styles.aiConfidenceText}>
+                    {Math.round((mlSuggestion.confidence ?? 0) * 100)}%
+                  </Text>
+                </View>
               </View>
-            </View>
-          </View>
 
-          <Text style={styles.aiWhyLabel}>Why this suggestion?</Text>
-          <Text style={styles.aiWhyText}>{aiPrediction.why}</Text>
-        </View>
+              {/* Divider */}
+              <View style={styles.aiDivider} />
+
+              {/* Suggested category + CTA */}
+              <View style={styles.aiBodyRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiLabel}>Suggested category</Text>
+                  <View style={styles.aiCategoryPill}>
+                    <Text style={styles.aiCategoryText}>
+                      {mlSuggestion.category}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  onPress={onUseSuggestion}
+                  style={styles.aiUseButton}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.aiUseButtonText}>Use suggestion</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Explanation box */}
+              {mlSuggestion.explanation ? (
+                <View style={styles.aiWhyBox}>
+                  <Text style={styles.aiWhyLabel}>Why this suggestion?</Text>
+                  <Text style={styles.aiWhyText}>
+                    {mlSuggestion.explanation}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          )}
 
         {/* Amount input */}
         <View style={styles.section}>
@@ -384,6 +564,22 @@ const AddExpenseScreen: React.FC<Props> = () => {
             />
           </View>
         </View>
+
+        {/* Note / Title */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Title</Text>
+          <View style={styles.inputWrapper}>
+            <TextInput
+              style={styles.textInput}
+              value={note}
+              onChangeText={onNoteChange}
+              placeholder="e.g. Dinner at cafe, groceries..."
+              placeholderTextColor={colors.placeholder}
+              multiline
+            />
+          </View>
+        </View>
+
 
         {/* Date */}
         <View style={styles.section}>
@@ -407,21 +603,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
           )}
         </View>
 
-        {/* Note / description */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Description</Text>
-          <View style={styles.inputWrapper}>
-            <TextInput
-              style={styles.textInput}
-              value={note}
-              onChangeText={setNote}
-              placeholder="e.g. Dinner at cafe, groceries..."
-              placeholderTextColor={colors.placeholder}
-              multiline
-            />
-          </View>
-        </View>
-
+        
         {/* Payment method */}
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Payment Method</Text>
@@ -588,26 +770,6 @@ const AddExpenseScreen: React.FC<Props> = () => {
   );
 };
 
-type ChipProps = {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-};
-
-const Chip: React.FC<ChipProps> = ({ label, selected, onPress }) => {
-  return (
-    <TouchableOpacity
-      style={[styles.chip, selected && styles.chipSelected]}
-      onPress={onPress}
-      activeOpacity={0.8}
-    >
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-};
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -634,6 +796,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
   },
+
+  /** AI card **/
   aiCard: {
     marginTop: 12,
     marginBottom: 20,
@@ -646,16 +810,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   aiIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "#FFFFFF",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
-  },
-  aiIcon: {
-    fontSize: 20,
   },
   aiTitle: {
     fontSize: 14,
@@ -669,18 +830,30 @@ const styles = StyleSheet.create({
   },
   aiConfidencePill: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: "#DCFCE7",
+    alignItems: "flex-end",
+  },
+  aiConfidenceLabel: {
+    fontSize: 10,
+    color: "#15803D",
   },
   aiConfidenceText: {
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 13,
+    fontWeight: "700",
     color: "#16A34A",
   },
-  aiBodyRow: {
-    marginTop: 16,
+  aiDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#E5E7EB",
+    marginTop: 12,
     marginBottom: 12,
+  },
+  aiBodyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
   },
   aiLabel: {
     fontSize: 12,
@@ -699,6 +872,26 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.primary,
   },
+  aiUseButton: {
+    marginLeft: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
+  },
+  aiUseButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.primary,
+  },
+  aiWhyBox: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: "#E0E7FF",
+  },
   aiWhyLabel: {
     fontSize: 12,
     fontWeight: "500",
@@ -709,6 +902,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
   },
+
+  /** Rest of form **/
   section: {
     marginBottom: 20,
   },
