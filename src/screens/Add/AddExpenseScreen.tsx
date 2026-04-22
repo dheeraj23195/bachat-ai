@@ -46,8 +46,10 @@ import {
   parseISO,
   isWithinInterval,
 } from "date-fns";
-import { sendBudgetAlertNotification } from "../../services/notifications";
+import { hapticSuccess, hapticError } from "../../lib/haptics";
+import { sendPushNotification } from "../../services/notifications";
 import { mlService } from "../../ml/MLService";
+import { soundManager } from "../../services/soundManager";
 import { Bot } from "lucide-react-native";
 
 /**
@@ -106,7 +108,7 @@ async function checkBudgetAlertsForNewExpense(saved: Transaction) {
         )}% of the limit.`;
 
         // Local notification (OS-level)
-        await sendBudgetAlertNotification(title, body);
+        await sendPushNotification(title, body);
 
         // If you only want one notification per expense, you can break here.
         // break;
@@ -335,6 +337,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
 
     const numericAmount = parseFloat(amount.replace(/[^0-9.]/g, ""));
     if (!numericAmount || numericAmount <= 0) {
+      hapticError();
       Alert.alert("Invalid amount", "Please enter a valid amount.");
       return;
     }
@@ -363,6 +366,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
     }
 
     if (!categoryToSaveId) {
+      hapticError();
       Alert.alert("Choose a category", "Please select a category.");
       return;
     }
@@ -412,6 +416,8 @@ const AddExpenseScreen: React.FC<Props> = () => {
         console.error("ML training failed", trainErr);
       }
 
+      hapticSuccess();
+      soundManager.play('success');
       Alert.alert("Expense saved", "Your expense has been added.", [
         { text: "OK" },
       ]);
@@ -419,6 +425,7 @@ const AddExpenseScreen: React.FC<Props> = () => {
       resetForm();
     } catch (err) {
       console.error("Failed to save transaction", err);
+      hapticError();
       Alert.alert(
         "Error",
         "Something went wrong while saving your expense. Please try again."

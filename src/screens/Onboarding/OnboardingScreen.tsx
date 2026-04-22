@@ -778,8 +778,9 @@ const styles = StyleSheet.create({
   hiddenPinInput: {
     position: "absolute",
     opacity: 0,
-    height: 0,
-    width: 0,
+    height: 1,
+    width: 1,
+    left: -9999,
   },
   bulletRow: {
     flexDirection: "row",

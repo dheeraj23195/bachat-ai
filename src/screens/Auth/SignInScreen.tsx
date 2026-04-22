@@ -21,11 +21,16 @@ import {
   clearCloudBackup,
 } from "../../services/cloudSync";
 import { saveEncryptionSecret } from "../../lib/authSecret";
-import {
-  Lock
-} from "lucide-react-native"
+import { Lock } from "lucide-react-native";
 import { hasPin } from "../../lib/pin";
 import { getDb } from "../../services/db";
+import Toast from "react-native-toast-message";
+import { z } from "zod";
+
+const signInSchema = z.object({
+  email: z.string().trim().min(1, "Email is required").email("Please enter a valid email address."),
+  password: z.string().min(6, "Password must be at least 6 characters."),
+});
 
 type Props = NativeStackScreenProps<RootStackParamList, "SignIn">;
 
@@ -53,7 +58,23 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
   const [password, setPassword] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const handleEmailChange = (text: string) => {
+    setEmail(text);
+    if (errors.email) {
+      const parsed = signInSchema.shape.email.safeParse(text);
+      if (parsed.success) setErrors((prev) => ({ ...prev, email: "" }));
+    }
+  };
+
+  const handlePasswordChange = (text: string) => {
+    setPassword(text);
+    if (errors.password) {
+      const parsed = signInSchema.shape.password.safeParse(text);
+      if (parsed.success) setErrors((prev) => ({ ...prev, password: "" }));
+    }
+  };
 
   const handleBack = () => {
     navigation.goBack();
@@ -62,18 +83,22 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
   const handleSignIn = async () => {
     if (submitting) return;
 
-    const trimmedEmail = email.trim().toLowerCase();
-    setErrorMessage(null);
-
-    if (!trimmedEmail || !password) {
-      setErrorMessage("Please enter both email and password.");
+    const parsedData = signInSchema.safeParse({ email, password });
+    if (!parsedData.success) {
+      const newErrs: Record<string, string> = {};
+      parsedData.error.issues.forEach((iss) => {
+        newErrs[iss.path[0]] = iss.message;
+      });
+      setErrors(newErrs);
       return;
     }
+
+    const { email: trimmedEmail, password: validPassword } = parsedData.data;
 
     try {
       setSubmitting(true);
 
-      const user = await signInWithEmail(trimmedEmail, password);
+      const user = await signInWithEmail(trimmedEmail, validPassword);
       if (!user) {
         throw new Error("Sign-in failed. Please check your credentials.");
       }
@@ -89,7 +114,11 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
         try {
           await downloadAndRestoreBackup();
           console.log("[Auth] Cloud restore complete");
-          Alert.alert("Synced", "Your data has been restored from the cloud.");
+          Toast.show({
+            type: "success",
+            text1: "Synced",
+            text2: "Your data has been restored from the cloud.",
+          });
         } catch (restoreErr: any) {
           console.warn(
             "[Auth] Cloud restore failed or no backup:",
@@ -117,7 +146,11 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
 
     } catch (err: any) {
       console.error("SignIn error", err);
-      setErrorMessage(err?.message ?? "Failed to sign in. Please try again.");
+      Toast.show({
+        type: "error",
+        text1: "Failed to sign in",
+        text2: err?.message ?? "Please try again.",
+      });
     } finally {
       setSubmitting(false);
     }
@@ -128,10 +161,11 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleForgotPassword = () => {
-    Alert.alert(
-      "Not implemented yet",
-      "Password reset via email can be added later via Supabase auth."
-    );
+    Toast.show({
+      type: "info",
+      text1: "Coming soon",
+      text2: "Password reset via email will be added later.",
+    });
   };
 
   return (
@@ -177,9 +211,10 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
             autoCapitalize="none"
             autoCorrect={false}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={handleEmailChange}
           />
         </View>
+        {errors.email ? <Text style={styles.errorTextInline}>{errors.email}</Text> : null}
       </View>
 
       <View style={styles.formGroup}>
@@ -196,14 +231,11 @@ const SignInScreen: React.FC<Props> = ({ navigation }) => {
             placeholderTextColor={colors.placeholder}
             secureTextEntry
             value={password}
-            onChangeText={setPassword}
+            onChangeText={handlePasswordChange}
           />
         </View>
+        {errors.password ? <Text style={styles.errorTextInline}>{errors.password}</Text> : null}
       </View>
-
-      {errorMessage ? (
-        <Text style={styles.errorText}>{errorMessage}</Text>
-      ) : null}
 
       <TouchableOpacity
         style={[styles.primaryButton, submitting && { opacity: 0.6 }]}
@@ -330,8 +362,8 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: "500",
   },
-  errorText: {
-    marginTop: 12,
+  errorTextInline: {
+    marginTop: 6,
     fontSize: 13,
     color: "#EF4444",
   },

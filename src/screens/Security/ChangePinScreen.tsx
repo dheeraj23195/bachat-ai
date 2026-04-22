@@ -248,6 +248,9 @@ const styles = StyleSheet.create({
   hiddenInput: {
     position: "absolute",
     opacity: 0,
+    height: 1,
+    width: 1,
+    left: -9999,
   },
   primaryButton: {
     marginTop: 8,

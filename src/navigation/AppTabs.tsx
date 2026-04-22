@@ -2,6 +2,7 @@ import React from "react";
 import { View, StyleSheet } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import colors from "../lib/colors";
+import { hapticLight } from "../lib/haptics";
 
 import HomeScreen from "../screens/Home/HomeScreen";
 import BudgetScreen from "../screens/Budget/BudgetScreen";
@@ -24,6 +25,11 @@ const Tab = createBottomTabNavigator<AppTabParamList>();
 const AppTabs: React.FC = () => {
   return (
     <Tab.Navigator
+      screenListeners={{
+        tabPress: () => {
+          hapticLight();
+        },
+      }}
       screenOptions={({ route }) => ({
         headerShown: false,
 

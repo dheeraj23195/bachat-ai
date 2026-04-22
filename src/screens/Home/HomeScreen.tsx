@@ -13,6 +13,7 @@ import { AppTabParamList } from "../../navigation/AppTabs";
 
 import colors from "../../lib/colors";
 import { useTransactionsStore } from "../../store/useTransactionsStore";
+import { useAlertsStore } from "../../store/useAlertsStore";
 import {
   startOfMonth,
   endOfMonth,
@@ -64,8 +65,10 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const handleImportPress = () => navigation.navigate("ImportTransactions");
   const handleScanPress = () => {}; // leave empty for now
   const handleChatPress = () => navigation.navigate("Chatbot");
-  const handleNotificationsPress = () => navigation.navigate("Alerts");
+  const handleNotificationsPress = () => navigation.navigate("NotificationCenter");
   const handleAddPress = () => navigation.navigate("Add");
+
+  const unreadCount = useAlertsStore(s => s.history.filter(h => !h.read).length);
 
   const transactions = useTransactionsStore((s) => s.transactions);
   const isFocused = useIsFocused();
@@ -240,15 +243,27 @@ const HomeScreen: React.FC<Props> = ({ navigation }) => {
             </View>
 
             {/* Manual Sync Now button */}
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleManualSync}
-              disabled={syncing}
-            >
-              <Text style={styles.syncButtonText}>
-                {syncing ? "Syncing…" : "Sync Now"}
-              </Text>
-            </TouchableOpacity>
+            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={handleManualSync}
+                disabled={syncing}
+                style={{marginRight: 12}}
+              >
+                <Text style={styles.syncButtonText}>
+                  {syncing ? "Syncing…" : "Sync Now"}
+                </Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity style={styles.bellButton} onPress={handleNotificationsPress}>
+                <Bell size={20} color="#FFFFFF" />
+                {unreadCount > 0 && (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Monthly summary card */}
@@ -502,10 +517,30 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.18)",
     justifyContent: "center",
     alignItems: "center",
+    position: "relative",
   },
   bellIcon: {
     fontSize: 18,
     color: "#FFFFFF",
+  },
+  unreadBadge: {
+    position: "absolute",
+    top: -2,
+    right: -4,
+    backgroundColor: "#EF4444",
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: colors.primary,
+  },
+  unreadText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "700",
   },
   summaryCard: {
     marginTop: 20,

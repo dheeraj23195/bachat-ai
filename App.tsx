@@ -5,6 +5,7 @@ import { initMLTables } from "./src/ml/db";
 import { ActivityIndicator, View, Text, AppState } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 import RootNavigator, { RootStackParamList } from './src/navigation/RootNavigator';
 import { initDatabase } from './src/services/db';
 import { useTransactionsStore } from './src/store/useTransactionsStore';
@@ -88,6 +89,7 @@ export default function App() {
       <NavigationContainer ref={navigationRef}>
         <RootNavigator />
       </NavigationContainer>
+      <Toast />
     </SafeAreaProvider>
   );
 }

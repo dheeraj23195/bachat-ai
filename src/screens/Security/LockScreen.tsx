@@ -12,7 +12,7 @@ import colors from "../../lib/colors";
 import { verifyPin } from "../../lib/pin";
 import { useNavigation } from "@react-navigation/native";
 import { authenticateBiometric, isBiometricSupported, getBiometricEnabled } from "../../lib/biometric";
-
+import { hapticSuccess, hapticError } from "../../lib/haptics";
 
 const LockScreen: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -45,6 +45,7 @@ const LockScreen: React.FC = () => {
 
       if (valid) {
         setError("");
+        hapticSuccess();
         // Unlock → go to app
         navigation.reset({
           index: 0,
@@ -53,6 +54,7 @@ const LockScreen: React.FC = () => {
       } else {
         // Error feedback
         setError("Incorrect PIN. Try again.");
+        hapticError();
         Vibration.vibrate(100);
         setPin("");
 
@@ -67,11 +69,13 @@ const LockScreen: React.FC = () => {
   const handleBiometricUnlock = async () => {
     const ok = await authenticateBiometric();
     if (ok) {
+      hapticSuccess();
       navigation.reset({
         index: 0,
         routes: [{ name: "AppTabs" }],
       });
     } else {
+      hapticError();
       Vibration.vibrate(80);
     }
   };
@@ -119,6 +123,7 @@ const LockScreen: React.FC = () => {
         {/* Hidden PIN TextInput */}
         <TextInput
           ref={pinInputRef}
+          value={pin}
           onChangeText={handlePinChange}
           keyboardType="number-pad"
           maxLength={6}
@@ -180,6 +185,9 @@ const styles = StyleSheet.create({
   hiddenInput: {
     position: "absolute",
     opacity: 0,
+    height: 1,
+    width: 1,
+    left: -9999,
   },
   errorText: {
     textAlign: "center",

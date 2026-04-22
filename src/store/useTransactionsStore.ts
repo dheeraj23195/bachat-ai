@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Transaction, TransactionFilter } from '../lib/types';
 import { listTransactions } from '../services/transactions';
+import { checkBudgetLimits, scheduleTransactionReminders } from '../services/alertsManager';
 
 interface TransactionsState {
   transactions: Transaction[];
@@ -26,8 +27,15 @@ export const useTransactionsStore = create<TransactionsState>((set) => ({
     }
   },
 
-  addLocalTransaction: (tx) =>
+  addLocalTransaction: (tx) => {
     set((state) => ({
       transactions: [tx, ...state.transactions],
-    })),
+    }));
+
+    // Trigger alerts logic asynchronously
+    setTimeout(() => {
+      checkBudgetLimits(tx).catch(console.error);
+      scheduleTransactionReminders(tx).catch(console.error);
+    }, 100);
+  },
 }));

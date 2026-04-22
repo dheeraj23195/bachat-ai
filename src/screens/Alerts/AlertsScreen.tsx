@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigation } from '@react-navigation/native';
+import { useAlertsStore } from '../../store/useAlertsStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch } from 'react-native';
 import colors from '../../lib/colors';
@@ -12,9 +13,8 @@ import { startOfMonth, endOfMonth, parseISO, isWithinInterval } from 'date-fns';
 
 
 const AlertsScreen: React.FC = () => {
-  const [monthlyLimitAlert, setMonthlyLimitAlert] = useState(true);
-  const [categoryLimitAlert, setCategoryLimitAlert] = useState(true);
-  const [dailyOverspendAlert, setDailyOverspendAlert] = useState(false);
+  const preferences = useAlertsStore((s) => s.preferences);
+  const updatePreferences = useAlertsStore((s) => s.updatePreferences);
 
   // ---- NEW: budgets + categories + transactions ----
   const transactions = useTransactionsStore((s) => s.transactions);
@@ -171,26 +171,27 @@ const AlertsScreen: React.FC = () => {
             <SettingsSwitchRow
               title="Monthly budget limit"
               subtitle="Alert when your total spend crosses 80% of monthly budget"
-              value={monthlyLimitAlert}
-              onValueChange={setMonthlyLimitAlert}
+              value={preferences.monthlyLimitAlert}
+              onValueChange={(val) => updatePreferences({ monthlyLimitAlert: val })}
             />
             <View style={styles.divider} />
 
             <SettingsSwitchRow
               title="Category budget limit"
               subtitle="Alert when any category crosses its threshold"
-              value={categoryLimitAlert}
-              onValueChange={setCategoryLimitAlert}
+              value={preferences.categoryLimitAlert}
+              onValueChange={(val) => updatePreferences({ categoryLimitAlert: val })}
             />
             <View style={styles.divider} />
 
             <SettingsSwitchRow
               title="Daily overspending"
               subtitle="Smart detection of unusual spending spikes"
-              value={dailyOverspendAlert}
-              onValueChange={setDailyOverspendAlert}
+              value={preferences.dailyOverspendAlert}
+              onValueChange={(val) => updatePreferences({ dailyOverspendAlert: val })}
             />
           </View>
+
         </View>
 
                 {/* Current alerts */}

@@ -24,6 +24,7 @@ import { RootStackParamList } from "../../navigation/RootNavigator";
 import { resetDatabase } from '../../services/db';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getDb } from "../../services/db";
+import { useSettingsStore } from "../../store/useSettingsStore";
 
 type Props = BottomTabScreenProps<AppTabParamList, 'Settings'>;
 
@@ -35,6 +36,11 @@ const SettingsScreen: React.FC<Props> = ({}) => {
   const [profileName, setProfileName] = useState<string>('User');
   const [profileEmail, setProfileEmail] = useState<string>('you@example.com');
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
+  const hapticsEnabled = useSettingsStore((s) => s.hapticsEnabled);
+  const setHapticsEnabled = useSettingsStore((s) => s.setHapticsEnabled);
+  const soundsEnabled = useSettingsStore((s) => s.soundsEnabled);
+  const setSoundsEnabled = useSettingsStore((s) => s.setSoundsEnabled);
 
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -321,6 +327,30 @@ const SettingsScreen: React.FC<Props> = ({}) => {
               subtitle="Smart alerts when you approach budget limits"
               value={budgetAlertsEnabled}
               onValueChange={setBudgetAlertsEnabled}
+            />
+          </View>
+        </View>
+
+        {/* Preferences */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Preferences</Text>
+          <Text style={styles.sectionSubtitle}>
+            Customize your app experience
+          </Text>
+
+          <View style={styles.card}>
+            <SettingsSwitchRow
+              title="Sound feedback"
+              subtitle="Minimal auditory cues on actions and alerts"
+              value={soundsEnabled}
+              onValueChange={setSoundsEnabled}
+            />
+            <View style={styles.divider} />
+            <SettingsSwitchRow
+              title="Haptic feedback"
+              subtitle="Subtle vibrations on taps and actions"
+              value={hapticsEnabled}
+              onValueChange={setHapticsEnabled}
             />
           </View>
         </View>

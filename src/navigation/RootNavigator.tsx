@@ -8,6 +8,7 @@ import SignInScreen from "../screens/Auth/SignInScreen";
 import SignUpScreen from "../screens/Auth/SignUpScreen";
 
 import AlertsScreen from "../screens/Alerts/AlertsScreen";
+import NotificationCenterScreen from "../screens/Alerts/NotificationCenterScreen";
 import ImportTransactionsScreen from "../screens/Import/ImportTransactionsScreen";
 import ProfileScreen from "../screens/Profile/ProfileScreen";
 import ChatbotScreen from "../screens/Chatbot/ChatbotScreen";
@@ -36,6 +37,7 @@ export type RootStackParamList = {
 
   // Standalone screens
   Alerts: undefined;
+  NotificationCenter: undefined;
   ImportTransactions: undefined;
   Profile: undefined;
   Chatbot: undefined;
@@ -102,6 +104,7 @@ const RootNavigator: React.FC = () => {
 
       {/* Standalone */}
       <Stack.Screen name="Alerts" component={AlertsScreen} />
+      <Stack.Screen name="NotificationCenter" component={NotificationCenterScreen} />
       <Stack.Screen
         name="ImportTransactions"
         component={ImportTransactionsScreen}
